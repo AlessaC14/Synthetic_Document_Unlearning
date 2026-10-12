@@ -1,0 +1,225 @@
+
+\documentclass[11pt]{article}
+ 
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+ 
+\newcommand{\Hid}{\mathrm{Hid}}
+\newcommand{\Acc}{\mathrm{Acc}}
+\newcommand{\Rc}{\mathcal{R}}
+\newcommand{\Mrmu}{M_{\mathrm{RMU}}}
+\newcommand{\Mbase}{M_{\mathrm{base}}}
+
+\title{lab notebook week 2}
+\author{Alessa Carbo}
+\date{June 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+This week I'm running my probing and recovery dynamic experiments. For Monday June 8th, we've started with RMU and WMDP-bio.  We operationalize this
+distinction through a recovery-budget quantity, $\Hid_\tau$, and instantiate its
+\emph{representational} axis: we ask whether the suppressed answer to a WMDP-bio
+multiple-choice question is decodable from the frozen residual stream of an RMU-unlearned
+model (\texttt{cais/Zephyr\_RMU}) by a probe, even though the model's behavioral accuracy
+is floored. Across a grid spanning two probe capacities (linear, MLP) and four
+token-aggregation schemes (last-token, full-sequence mean, option-span pool,
+learned-attention), at all 33 layers, no probe recovers the answer from the RMU model,
+while the identical probes recover it from the base model in every cell.And we have a selectiv null because the same pipeline recovers general biology (MMLU-bio, not in the forget set)
+from the RMU model as well as from base, ruling out collateral damage/buggy implemention or/and generic
+probe-blindness. We can see that RMU's suppression is likely deep and targeted on the
+representational-recovery axis at the probe budgets tested,though this is in onlu one possible axis/budget.
+
+
+\section{Formal setup}
+ 
+\subsection{The recovery-budget quantity}
+Let $M$ be an unlearned model and $T$ a target task. Let $\Rc_c$ denote a
+\emph{recovery procedure} parameterized by a budget $c$, mapping a model to a recovered
+predictor for $T$. Following the project's formalization, define the \emph{hiddenness} of
+the capability at threshold $\tau$ as the minimum budget at which recovery clears $\tau$:
+\begin{equation}
+\Hid_\tau(M, T) \;=\; \min\Bigl\{\, c \;:\; \Acc\bigl(\Rc_c(M), T\bigr) \ge \tau \,\Bigr\},
+\label{eq:hid}
+\end{equation}
+with $\Hid_\tau(M,T) = \infty$ if no budget in the considered class reaches $\tau$.
+Small $\Hid_\tau$ means the capability is shallowly hidden (a cheap recovery suffices);
+large or unreached $\Hid_\tau$ means it is deeply removed or inaccessible to the recovery
+class. The budget $c$ is not a single scalar: the proposal distinguishes at least a
+\emph{representational} axis (the computational class of a probe reading frozen
+activations), an \emph{optimization} axis (fine-tuning steps / weight movement), and an
+\emph{in-context} axis (number of ICL demonstrations). We report the representational axis only for the moment.
+
+
+\subsection{The representational recovery operator}
+Fix a model $M$ with $L+1$ residual-stream sites (embeddings plus $L$ transformer layers),
+hidden dimension $d$. For an input $x$ let $h^{(\ell)}_t(M,x)\in\mathbb{R}^d$ be the
+residual-stream activation at layer $\ell$ and token position $t$. A representational
+recovery procedure is a choice of (i) layer $\ell$, (ii) a token-aggregation map
+$g:\{h^{(\ell)}_t\}_t \mapsto z\in\mathbb{R}^{d}$ (or $\mathbb{R}^{d'}$), and (iii) a probe
+$p_\theta$ of capacity class $\mathcal{C}$ fit on $(z, y)$ pairs, where $y$ is the
+gold label. The recovered predictor is $\Rc_c(M): x \mapsto p_\theta\bigl(g(\{h^{(\ell)}_t(M,x)\}_t)\bigr)$,
+and the representational budget is the pair
+\begin{equation}
+c \;=\; (\,\text{capacity class } \mathcal{C},\ \text{aggregation } g\,),
+\end{equation}
+with the layer $\ell$ swept as a free coordinate. Recovery accuracy is estimated by
+5-fold cross-validated accuracy of $p_\theta$, so that $\Acc(\Rc_c(M),T)$ in
+Eq.~\eqref{eq:hid} is a held-out quantity, not a fit.
+
+ 
+\subsection{Task, labels, and the suppression-faithful read position}
+$T$ is WMDP-bio multiple choice ($N=1273$ four-way questions). The prompt is the exact
+string the model was unlearned and evaluated under (lm-evaluation-harness v0.4.2, task
+\texttt{wmdp\_bio}, raw \texttt{doc\_to\_text}, no chat template): a fixed preamble, the
+question, the four options rendered as \texttt{A.}--\texttt{D.}, and the cue
+\texttt{Answer:}. Scoring is by letter-logit: the harness compares the logits of the
+single continuation tokens $\{\,\texttt{A},\texttt{B},\texttt{C},\texttt{D}\,\}$ at the
+final context token (the \texttt{:} of \texttt{Answer:}). Accordingly the probe label is
+the gold answer index $y\in\{0,1,2,3\}$ (chance $=0.25$), and the default read position is
+that same \texttt{:} token --- the position the suppression acts on. Matching this format
+is essential: a probe that reads a different position or prompt format measures a model in
+a state the suppression never defended.
+
+
+ 
+\section{Method}
+ 
+\subsection{The probe grid}
+We sweep the representational budget $c$ over the Cartesian product of two capacity classes
+and four aggregation maps, each at all $33$ layers:
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{Capacity $\mathcal{C}$:} (a) \emph{linear} --- multinomial logistic
+        regression; (b) \emph{MLP} --- one hidden layer ($256$ units, weight decay
+        $10^{-3}$).
+  \item \textbf{Aggregation $g$:} (a) \emph{last-token} --- read the \texttt{:} position;
+        (b) \emph{full-sequence mean} --- masked mean over all prompt tokens;
+        (c) \emph{option-span pool} --- mean over only the \texttt{A.}--\texttt{D.} option
+        tokens; (d) \emph{learned-attention} --- a single-query attention head pools over
+        all positions, jointly trained with a linear or small-MLP read head.
+\end{itemize}
+Each aggregation tests a distinct "hiding"/obscuring hypothesis: the last-token read asks whether the
+answer survives at the scored position; the mean and option-span pools ask whether it
+survives at \emph{other} positions that the readout ignores; the learned-attention head
+asks whether it survives at \emph{any} position the probe could choose to attend to.
+
+\section{Results}
+ 
+\subsection{Pipeline validity and a true negative}
+The base probe clears its gate (best layer $22$, $\Acc=0.615 \gg 0.55$) with the expected
+profile: chance through layer $13$, a sharp rise at layers $14$--$16$, and a plateau of
+$0.59$--$0.62$ across layers $17$--$32$, matching the base model's $\sim\!0.64$ behavioral
+WMDP-bio accuracy. The RMU model's behavioral accuracy is floored at $0.299$ (correct
+checkpoint, suppression confirmed). A pathology audit establishes that the RMU probe's
+flat-at-chance reading is a true negative and not an extraction artifact: probes converge;
+RMU activation norms are healthy (within $\sim\!15\%$ of base, no collapse); RMU held-out
+accuracy is indistinguishable from its shuffled-label control at every layer while base
+generalizes; and base and RMU activations are bit-for-bit identical through layer $5$,
+first diverging at layer $6$ --- pinning RMU's intervention to its documented steer region
+(layers $5$--$7$).
+ 
+\subsection{The grid: no recovery from RMU at any cell}
+Table~\ref{tab:grid} reports the locked-layer ($\ell=22$) result for every cell. In all
+eight, the base positive control passes and the RMU signal (real minus shuffle) stays
+within noise of zero: at the locked layer and, equivalently, at the best layer over all
+$33$. The same probes that recover $\sim\!0.6$ from base recover nothing from RMU.
+
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llccc}
+\toprule
+Aggregation & Capacity & Base recovery & RMU signal ($@\,\ell{=}22$) & RMU best-layer signal \\
+\midrule
+Last-token        & linear & $0.615$ & $\approx 0$ ($\equiv$ shuffle) & --- \\
+Last-token        & MLP    & $0.640$ & $\approx 0$ & --- \\
+Full-seq.\ mean   & linear & $+0.105$ & $+0.011$ & $\le 0.02$ \\
+Full-seq.\ mean   & MLP    & $+0.043$ & $-0.006$ & $\le 0.02$ \\
+Option-span pool  & linear & $+0.120$ & $+0.028$ & $+0.045$ \\
+Option-span pool  & MLP    & $+0.108$ & $+0.020$ & $+0.046$ \\
+Learned-attention & linear & $+0.396$ & $-0.010$ & $+0.021$ \\
+Learned-attention & MLP    & $+0.376$ & $+0.001$ & $+0.035$ \\
+\bottomrule
+\end{tabular}
+\caption{Representational-recovery grid at the locked layer $\ell=22$. ``Base recovery''
+is accuracy for the last-token cells and signal (real $-$ shuffle) for the pooled/attention
+cells. RMU signal is within noise of zero everywhere; RMU's maximum signal across all
+layers and all probes is $\le\!\sim\!0.05$.}
+\label{tab:grid}
+\end{table}
+
+
+The cells are not "equally strong nulls", and we should be transparent about that. The last-token and
+learned-attention cells are the \emph{strong} nulls: their base positive control is large
+($0.62$ and $+0.40$ signal respectively), something like a comparably large hidden signal would have
+been detected. The full-sequence-mean and option-span cells are \emph{corroborating}: mean
+pooling dilutes the answer across $\sim\!150$ tokens, weakening even the base control to
+$+0.10$--$+0.12$, so these cells can only rule out a hidden signal as strong as their
+(weaker) positive control could detect. All four point the same way; we lead with the
+strong cells.
+
+In terms of Eq.~\eqref{eq:hid}, for every budget $c$ in the tested grid,
+$\Acc(\Rc_c(\Mrmu), T)$ never reaches any threshold $\tau$ meaningfully above chance, so the
+representational $\Hid_\tau(\Mrmu, T)$ is \emph{unreached across the entire tested budget
+range}, whereas for the base model it is small (a linear probe at layer $22$ already clears
+$\tau=0.55$).
+ 
+\subsection{Selectivity: the null is forget-set-specific}
+On the retain set MMLU-bio ($N=454$, general biology not in the forget set), the RMU model
+is \emph{not} floored: behavioral accuracy is $0.676$ (base $0.714$), and the probe recovers
+the answer with signal $+0.40$ at layer $22$ so essentially equal to the base signal
+$+0.44$, with the two per-layer curves tracking each other almost exactly. Table~\ref{tab:sel}
+juxtaposes the forget and retain results.
+
+ \begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Probe ($@\,\ell{=}22$) & WMDP-bio (forget) & MMLU-bio (retain) \\
+\midrule
+Base & $0.615$ (recovers) & $0.709$ (recovers) \\
+RMU  & $0.298$ (flat, $\equiv$ shuffle) & $0.676$ (recovers, signal $+0.40$) \\
+\bottomrule
+\end{tabular}
+\caption{Retain-selectivity control. The RMU model's representational null is specific to
+the forget set; on retain biology its residual stream decodes the answer as well as base's.}
+\label{tab:sel}
+\end{table}
+ 
+This rules out the two principal benign explanations of the forget-set null:
+(i) RMU did not damage biological capability broadly (both behavioral and probe accuracy on
+retain bio are intact); and (ii) the probe pipeline is not generically blind to RMU
+activations (it recovers RMU on the retain set, failing only on the forget set).
+
+\section{Analysis and interpretation}
+ We tested Across a broad sweep of the representational-recovery axis with two capacity classes, four
+token-aggregation schemes including a learned attention style one that can attend to any position, at all
+$33$ layers: the WMDP-bio answer is not decodable from RMU's residual stream, while
+identical probes recover it from base everywhere, and the null is selective to the forget
+set. 
+
+This seems to establish that on the representational axis  RMU's suppression is therefore \emph{deep and targeted}
+at the probe budgets tested: the suppressed capability is not hidden behind a cheap read at
+any tested position or moderate capacity. This at least tells us that we are not dealing with the
+failure mode hypothesized for some unlearning losses, under which a probe (or a re-applied
+direction) would recover the capability at near-zero cost.
+
+\section{Limitations so far lol}
+The claim is bounded to one axis and one budget range. ``No probe we tried recovers it'' is
+not ``provably absent at any capacity'': the grid spans linear-to-MLP read heads and
+fixed-to-learned token access, a broad but finite sweep. More importantly, the
+representational axis is one of three. A capability can be representationally inaccessible
+yet cheaply restorable on the \emph{optimization} axis (a few steps of adversarial
+fine-tuning) or the \emph{in-context} axis (retrieval / ICL demonstrations); indeed
+data-filtering work reports exactly such an axis-dependent dissociation.
+\end{document}

@@ -1,0 +1,120 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\usepackage{microtype}
+
+\newcommand{\Hid}{\mathrm{Hid}}
+\newcommand{\Acc}{\mathrm{Acc}}
+\newcommand{\Rc}{R}
+\newcommand{\Mrmu}{M_{\mathrm{RMU}}}
+\newcommand{\PR}{\mathrm{PR}}
+
+\title{Lab Notebook --- The Representational Axis, Consolidated\\
+\large Probing and contraction geometry across the unlearning battery}
+\author{Alessa Carbo}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\section{Purpose of this entry}
+We are consolidating all the probing we have done so far. 
+This is the axis of the recovery-budget framework accross the full method battery; we also have the individual methods entries in separate .tex files. But we put all of them here for the big picture. 
+
+\section{Two representational instruments}
+
+
+\paragraph{Probe battery (decodability)}
+Probes of capacity class $C$ (linear, MLP) and token aggregation $g$ (last-token, full-mean, option-span, learned-attention), fit per layes with 5-fold stratified cross validation. In the regime here ($d=4096 \gg n$) training accuracy is identically  $1.0$ and uninformative. The only meaningful quantity is the held-out \emph{signal} $:=\Acc_{\text{real}}-\Acc_{\text{shuffle}}$. Every result is also gated on a working positive control -- negative on a cell whose positive control does not fire is recorded as inconclusive, not as a null.
+
+\paragraph{readout-1 (contraction geometry).} 
+We have two channels on the forget-set activations, per layer. (i) Effective rank via participation ratio 
+$\PR = (\sum_i\lambda_i)^2 / \sum_i\lambda_i^2$ on the covariance eigenvalues
+$\lambda_i$ which functions as a soft count of how many directions the activation cloud actually occupies
+(even spread over $k$ directions $\Rightarrow \PR\approx k$; collapse onto one $\Rightarrow \PR\to 1$). MMD to a per-cloud moment-matched Gaussian --- a
+scale-normalized index of distributional \emph{shape} (anisotropy, correlation), so
+absolute mean/scale offsets between models drop out. PR is the scale-sensitive primary;
+MMD corroborates and, being within-model and scale-normalized, is the cleaner channel when
+two models differ in overall rank.
+
+Some shared control/experimental design accross: 
+
+Train-fold-only scaler statistics; selectivity always checked against a retain set (MMLU-bio) the model was not asked to forget; matched $N$ subsampling whenever two clouds od different size are compared on PR/MMD ((both are
+$N$-dependent --- PR is hard-capped near $N{-}1$, MMD$^2$ carries finite-sample positive
+bias). And the instruments are validtaed against a positive control known to fire before any negative is trusted. 
+
+\section{Method-by-method summary}
+\subsection{RMU (Zephyr-7B)}
+Probe Battery: a grid-wide null. No probe recovers the WMDP answer at any of the 33 layers in any of the eight (capacity $\times$ aggregation) cells, while identical probes recover $\sim\!0.6$ from base everywhere. The null survives a pathology audit (probes converge); activation norms within n $\sim\!15\%$ of base; held-out accuracy
+$\equiv$ shuffle at every layer) and is selective: on MMLU-bio retain the RMU model decodes
+as well as base. readout-1: a sharp $\PR$ collapse ($-94\%$) localized to the documented
+steer layer $L7$, forget-specific. \textbf{Regime: present, hidden by contraction;
+representationally dead (decodability) at the tested budgets, contraction localized.}
+
+
+\subsection{Circuit Breakers (Deep Ignorance GPT-NeoX)}
+In this case: a three-model design (knows-it/CB/never-knew) 
+This replaces RMU's chance anchor with a real ceiling and floor. Probe battery:  the readout cells (the only ones with a working positive
+control on this weak $0.43$-competent base) show no WMDP-bio recovery; off-readout cells
+are \emph{inconclusive} (positive control collapses), not nulls. The robust headline is a
+within-model forget-vs-retain decodability dissociation. readout-1: forget $\PR$ collapses
+to $\sim\!2$--$4$ across $L4$--$30$ with a forget-specific MMD spike -- - \emph{contraction},
+not the rank-preserving rotation that was pre-registered (see the individual entry for the
+falsification). Then we have decodaility at the collapse site: the forget answer is  is \emph{not} linearly
+recoverable, at the never-knew floor, capacity no help. Regime: present, hidden by
+contraction; representationally dead at the collapse site; broad multi-layer collapse
+(distinct from RMU's sharp $L7$).
+
+\subsection{RepNoise (Llama-2-7b-chat)}
+In this case we have a harmful-finetuniung defense(MMD-toward-noise on BeaverTails) tested on its own forget domain at is loss's own site  (MMD-toward-noise on BeaverTails), tested on its own forget
+domain at its loss's own site (MLP-output, answer span). readout-1: \emph{no} contraction
+signature --- flat PR, no MMD collapse, sub-1\% weight movement, changes symmetric across
+harmful/harmless. The instrument was validated against RMU (it fired) before the negative
+was trusted; a nominally stronger $\beta{=}4$ checkpoint was rejected as a positive control
+after a weight-diff showed it moved weights \emph{less} than the default. \textbf{Regime:
+banked scoped negative: no RMU-like contraction for these released checkpoints, at this
+site.}
+
+\subsection{Deep Ignorance never-knew anchor}
+Since this our data-filtered model it gives us the genuine-absence reference the whole "destroyed vs hidden" question requires.  readout-1: forget $\PR$ \emph{intact} (tens, tracking the knows-it
+model), no MMD spike, $\approx$zero forget-vs-retain gap. Genuine absence reads as
+\emph{flat}, not collapsed --- the counterintuitive but essential point: not knowing
+something does not make activations low-rank, because the model still runs full-dimensional
+language computation over the prompt. \textbf{Regime: genuinely absent.}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+Model & readout-1 (PR / MMD) & probe (decodability) & regime \\
+\midrule
+Knows-it (unfiltered) & intact rank, forget$\approx$retain & decodes forget & present, unsuppressed \\
+CB & collapsed, forget-specific & fails (destroyed) & present, hidden by contraction \\
+RMU & collapsed at $L7$ & grid-wide null & present, hidden by contraction \\
+Never-knew (filtered) & intact / flat, no spike & fails (empty) & genuinely absent \\
+RepNoise & no contraction (validated) & --- (not run; scoped) & no RMU-like signature \\
+\bottomrule
+\end{tabular}
+\caption{Representational-axis fingerprints across the battery. The contraction channel
+isolates the contraction-based methods (RMU, CB) from genuine absence (never-knew) and from
+unsuppressed knowledge (knows-it). CB and never-knew both \emph{fail} the decodability
+probe, but for opposite reasons --- separated by provenance and the knows-it positive
+control, not by the probe value alone.}
+\label{tab:consolidated}
+\end{table}
+
+\paragraph{What the axis established.}
+Genuine absence has a measurable signature, and it is ``flat,'' not ``collapsed.' The never-knew anchor gives ``hidden but present'' something to look anomalous against. This is a useful reference frame for the project. 
+
+\textbf{The contraction instrument separates three regimes on its own.}
+These are unsuppressed (intact rank, decodes)/suppressed-by-contraction(collapsed)/genuinely absent(flat). I had a pre-registered hypothesis on how the contraction alone would not be sufficient to separate suppressioon from absenceand that the probe battery would be required; in fact the readout 1 does it, so it's more powerful than predicted, 
+
+\textbf{Contraction-based suppression destroys linear decodability at the contraction site.}
+      
+
+
+
+\end{document}

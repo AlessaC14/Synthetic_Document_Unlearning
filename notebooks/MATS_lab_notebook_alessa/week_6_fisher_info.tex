@@ -1,0 +1,226 @@
+
+\documentclass[11pt]{article}
+ 
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+ 
+ 
+\newcommand{\Hid}{\mathrm{Hid}}
+\newcommand{\Acc}{\mathrm{Acc}}
+\newcommand{\Rc}{\mathcal{R}}
+\newcommand{\Mcb}{M_{\mathrm{CB}}}
+\newcommand{\Mknows}{M_{\mathrm{know}}}
+\newcommand{\Mnever}{M_{\mathrm{filt}}}
+
+\newcommand{\Fisher}{\ensuremath{\mathrm{F}}}
+\newcommand{\note}[1]{{\color{gray}\small[#1]}}
+% compile-safe figur
+\newcommand{\figorbox}[3]{%
+  \IfFileExists{#1}{\includegraphics[width=#2]{#1}}%
+  {\fbox{\parbox[c][3.2cm][c]{#2}{\centering\ttfamily\footnotesize #3}}}}
+
+\title{Fisher Information Matrix}
+\author{Alessa Carbo}
+\date{June 2026}
+
+\maketitle
+
+\begin{document}
+
+\section{Purpose of this entry}
+We had our representational axis with probes, +readout contraction geometry and this established a three-regime picture but with some limitations in that it's reading activations, whereas recoverability is a fact about weights (fine-tuning moves in parameter space)
+
+An information-preserving map can kill linear decodability with the content intact (LEACE method), so a probe null/participation rate collapse is a statement about a mechanism and not certainty that a capability is gone. To ask the recovery question at all, we must measure the loss geometry over parameters. This entry builds attempts to build an instrument for that and we report what we see so far. 
+
+
+
+\section{Background and Theoretical frame}
+We can write the loss Hessian on the forget distribution via the generalized Gauss-Newton decomposition (Martens 2020):
+\begin{equation}
+  H \;=\; \underbrace{J^\top H_{\hat y}\, J}_{=\,\Fisher\;\succeq\,0\ \ (\text{GGN} = \text{true Fisher})}
+      \;+\; \underbrace{\textstyle\sum_i \frac{\partial \mathcal{L}}{\partial \hat y_i}\, H^{f}_\theta}_{R\ (\text{residual / functional Hessian})}.
+\end{equation}
+The $\Fisher$ (Gauss--Newton block) equals the true Fisher for an exponential-famoly head and its positive semidefinitive --- $v^\top \Fisher v = \mathbb{E}[(g^\top v)^2] \ge 0$ --- so it
+reports only non-negative (up / flat) curvature and is structurally blind to negative curvature.
+All negative curvature lives in the indefinite residual $R$.
+
+\paragraph{Fisher is necessary but not sufficient} This argument is given more completely in domenic's still incomplete draft on spectral reparametrization. 
+
+The thing is that an optimizser descends the full. $H$, not
+$\Fisher$. Driving $\Fisher \to 0$ (degenerate/flat) does not remove descent directions carried by $R$. A strict saddle with  $\lambda_{\min}(H)<0$ still admits recover. Hence \emph{Fisher degeneracy is necessary but not sufficient for non-recoverability}. A flat fisher is also exactly what rerouting produces, and the two are separated only by $R$, which the Fisher cannot see. 
+
+
+\section{Measurements}
+
+\subsection{Fisher-PR: the parameter-space twin of readout-1}
+Per layer, with $\Fisher_{ii}$ the diagonal Fisher entries,
+\begin{equation}
+  \mathrm{PR}_{\Fisher} \;=\; \frac{\big(\sum_i \Fisher_{ii}\big)^2}{\sum_i \Fisher_{ii}^2},
+\end{equation}
+
+This functionally identical to the activation participation ratio measure we had previously developed -- simply moved from the activation covariance to the Fisher. It is a "soft" count of how many parameter directions carry forget-task specific fisher information, and it is scale-free (invariant to a global rescaling of the spectrum).
+
+\subsection{True Fisher by exact 4-way enumeration}
+The Fisher is an expectation over labels drawn from the model's own predictive distribution. For a general language model this is typically intractable and usually approximate by the gold label -- e
+\emph{empirical} Fisher (equivalently Adam's squared-gradient accumulator), which coincidences with the GGN block only near a well-specified optimum and is therefore unreliable on the forgert set of a deliberately-suppressed model (Kunstner et al.\ 2019). In our case, our WMDP data is scored by letter logits $\{A,B,C,D\}$ at the \texttt{Answer:} colon token, so the label space has exactly four outcomes and the expectation collapses to an exact four-term sum: 
+\begin{equation}
+  \Fisher_{ii} \;=\; \frac{1}{N}\sum_{n}\ \sum_{c\in\{A,B,C,D\}}
+     p_\theta(c\mid x_n)\,\Big[\tfrac{\partial}{\partial \theta_i}\big(-\log p_\theta(c\mid x_n)\big)\Big]^2 .
+\end{equation}
+This is nice because we don't need to do sampling or an empirical-Fisher approximation! No gold label to be seen. 
+
+\subsection{Closed-form validation }
+We validated the enum,eration core against the analytic categorical Fisher before even touching the actual LLM. In logit space:
+$\Fisher_z = \mathrm{diag}(p) - p p^\top$; pushing through the linear
+multinomial-logistic toy $z = Wx+b$ gives the parameter diagonal
+\begin{equation}
+  \Fisher[W_{kj}] = x_j^2\, p_k(1-p_k), \qquad \Fisher[b_k] = p_k(1-p_k),
+\end{equation}
+both matched to numerical precision. These depend on  $p$ alone with the gold
+label $y$ appearing nowhere --- so the check certifies we compute the true GGN block $\Fisher$
+(the $I(\theta)$ of the theory), not the empirical Fisher
+
+\subsection{Controls, gates, and conservative treatment}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Format-sanity gate.} Behavioral accuracy from the extracted four letter-logits
+        must reproduce known values before any Fisher is trusted (base Zephyr $0.6426$ reproduced
+        exactly; RMU floored $0.2993$).
+  \item \textbf{Positive-control gate.} Run base first; require all $\Fisher_{ii}\ge 0$ and a
+        substantial / non-degenerate base forget-Fisher before reading a suppressed model
+        (base $S_1=\sum\Fisher_{ii}=7.83\times10^{6}$, $S_2=\sum\Fisher_{ii}^2=2.39\times10^{9}$).
+  \item \textbf{Per-block storage.} Diagonal keyed by parameter name / \texttt{layer\_idx};
+        structurally rank-deficient blocks (\texttt{embed}, \texttt{lm\_head},
+        \texttt{q\_proj}$\times$32, \texttt{k\_proj}$\times$32 $=66$ blocks) \emph{flagged, not
+        dropped}, so inclusion/exclusion is a post-hoc sensitivity choice.
+  \item \textbf{Conservative treatment} for headline numbers: exclude rank-deficient blocks
+        \emph{and} the rotation-contaminated output layers L30--31 (\S\ref{sec:cbcontam}).
+  \item \textbf{Summary scalar:} log-RMS deviation of the per-layer forget/retain PR ratio from
+        $1$. Reported alongside --- never instead of --- the per-layer curve.
+  \item \textbf{Run config:} single-GPU (H100, 80\,GB), bf16 model, fp32 diagonal accumulation,
+        $N=512$ forget subsample, retain full ($N=454$), seed $0$.
+\end{itemize}
+
+
+\section{Study 1 --- RMU (Zephyr-7B)}
+\subsection{Gates and artifacts}
+Format-sanity accuracy $0.64258 = $ target exactly on the full 1273 WMDP-bio set; RMU forget
+$0.2993$, retain (MMLU-bio) $0.6762$. Positive control passes (see above). Output: 291 per-block
+\texttt{.npy} diagonals ($\sim$27\,GB), layers 0--31 recoverable plus \texttt{embed}/\texttt{norm}/\texttt{lm\_head}
+(\texttt{layer\_idx} $=$ \texttt{None}); 66 rank-deficient blocks flagged. Letter-token ids
+$[330,365,334,384]$ (space/no-space candidates collapse to the same set here). Finite, non-negative.
+
+\subsection{Per-layer Fisher-PR: a localized sign-flip, not a monotone collapse}
+The forget/retain (and forget/base forget) Fisher PR-ratio is not a uniform collapse but rather a layer-localized thing wothh a sign flip. 
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Layer band & Forget vs baseline & Note \\
+\midrule
+0--6   & deficit ($\sim 0.25$--$0.4\times$, min at L5) & backprop-coupled (see below) \\
+7--13  & \textbf{excess}, up to $\mathbf{8.2\times}$ at L8 & RMU steering band \\
+14--24 & deficit ($\sim 0.3$--$0.5\times$) & \\
+25--31 & $\approx$ parity / slight excess & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Baselines are doubly-anchored.} RMU-retain (MMLU bio) and base-forget track each other almost layer-for-layer accross all 32 layers, so "retain intact" holds very strongly and the two are basically interchangeable baselines. It is RMU-forget which is the anomaly.
+
+\paragraph{Mechanism (interpretation).}
+This L7-L13 excess is likedly driven by \texttt{v\_proj}/\texttt{o\_proj}/MLP:
+on retain inputs their Fisher is concentrated (\texttt{v\_proj} $S_2 = 4.7\times10^{6}$,
+block-PR $\approx 11$k), on forget inputs diffuse ($S_2 = 2.2\times10^{5}$, block-PR $\approx 105$k).
+RMU steers layer-7 forget activations toward scaled noise, so the concentrated low-dimensional
+forget-answer circuit is replaced by diffuse dependence on many parameters --- PR rises. Survives
+excluding \texttt{q/k\_proj}, so it is not a rank-deficiency artifact.
+
+\paragraph{Why a multi-band signature is not suspicious?}
+RMU is technically byte-identical to base through its steer region because the edits are on layers 5-7, yet we see that the Fisher differs more at layers 0-6. But this does make sense if one considers that the Fisher-PR is a \emph{backpropagated} quantity, so parameter curvature upstream of the edit changes even where forward activations are bit-identical. The activation-PR can be local, but the Fisher-PR structurally cannot. 
+
+\subsection{Cross-substrate dual signature}
+At the same band we have our two substrates moving in opposite directions: activation-PR collapses at L7 ($19.0\to1.1$, $-94\%$; MMD $0.05\to0.62$), Fisher-PR shows
+\emph{excess} at L7--13. Read as \textbf{forward-collapse / backward-diffusion}: one steering
+intervention, squashing the forward representation while smearing the backward answer-curvature.
+
+ 
+\subsection{Config confirmation}\label{sec:rmuconfig}
+Read from the checkpoint weights: RMU modifies \emph{layers 5--7 only} (peak L7); 26 other layers
+byte-identical to base. The Fisher excess coincides with the intervention band.
+
+\subsection{Scalars are a trap}
+Every scalar summary points a different way: mean forget/retain ratio $1.35$ (L8 spike dominates
+$\Rightarrow$ ``forget higher''); median $0.67$ ($\Rightarrow$ ``forget lower''); global pooled PR
+forget $20.7$k vs retain $43.5$k $=0.48\times$ ($\Rightarrow$ ``forget lower''). The signal is a
+\emph{shape}; the per-layer curve is the honest object.
+ 
+\begin{figure}[h]\centering
+  \figorbox{figures/slice_c_fisher_pr.png}{0.9\linewidth}{figures/slice\_c\_fisher\_pr.png\\
+  (per-layer Fisher-PR, RMU forget vs retain vs base)}
+  \caption{RMU Zephyr-7B: per-layer Fisher-PR. Localized excess at the L7--13 steer band; deficits
+  elsewhere; retain tracks base-forget.}
+\end{figure}
+
+\section{Study 2 --- Deep-Ignorance NeoX three-way}
+ 
+\subsection{Design}
+Architecture- and confidence-matched three-way, all \texttt{GPTNeoXForCausalLM} (32 layers, hidden
+4096): $M_{\text{know}}$ (\texttt{unfiltered}, knows-it), $M_{\text{CB}}$ (\texttt{unfiltered-cb}),
+$M_{\text{filt}}$ (\texttt{e2e-strong-filter}, genuine never-knew). CB and never-knew are both
+near-floored on forget (CB forget acc $0.289$, never-knew $0.348$; knows-it competent $\approx0.43$
+\note{verify}), so any CB-vs-never-knew difference is geometry, not output confidence. This
+matched design is why it is the clean object rather than the cross-architecture RMU pairing.
+
+
+\subsection{Headline: static curvature detects intervention, not capability}
+log-RMS deviation of the forget/retain PR curve from 1, under three treatments:
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+Treatment & knows-it & never-knew & CB \\
+\midrule
+all layers                 & 0.191 & 0.294 & 0.655 \\
+excl.\ rank-deficient      & 0.332 & 0.339 & 0.871 \\
+\textbf{conservative (excl.\ RD $+$ L30--31)} & \textbf{0.34} & \textbf{0.35} & \textbf{0.74} \\
+excl.\ L30--31 only        & 0.196 & 0.302 & 0.557 \\
+median forget/retain ratio & 0.936 & 0.832 & 0.800 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Two claims:
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item \textbf{Sees the intervention.} CB $\approx 2.1\times$ above both references, robust:
+        survives RD exclusion ($0.87$) and survives dropping L30--31 ($0.74$); the separation does
+        not rest on the contaminated feature.
+  \item \textbf{Blind to the capability.} $\text{knows-it} \approx \text{never-knew}$
+        ($0.34$ vs $0.35$). On the static metric, a model that fully knows the forget content and
+        one that never learned it are indistinguishable, while the contraction method stands
+        apart. 
+
+
+\end{enumerate}
+
+\subsection{CB L30--31: rotation contamination}\label{sec:cbcontam}
+CB's largest raw feature is an explosion of forget-PR to $2.65\times$/$6.43\times$ at L30/L31. This
+is \emph{substantially a global-rotation / output-layer artifact} and was retired as a headline
+number:
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+Layer & CB forget-PR & CB retain-PR & knows-it retain-PR & CB-retain / KI-retain \\
+\midrule
+29 & 525{,}884 & 829{,}956 & 163{,}077 & $5.09\times$ \\
+30 & 103{,}357 & 38{,}964 & 5{,}429 & $7.18\times$ \\
+31 & 20{,}792 & 3{,}233 & 1{,}255 & $2.58\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

@@ -1,0 +1,261 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
+
+% --- status convention -------------------------------------------------
+\newcommand{\status}[1]{\textcolor{gray}{\footnotesize\textsf{[#1]}}}
+\newcommand{\verified}{\status{verified}}
+\newcommand{\pending}{\status{pending fp32 rerun}}
+\newcommand{\hypothesis}{\status{hypothesis, unevidenced}}
+\newcommand{\open}{\status{open decision}}
+\newcommand{\external}{\status{reported by DR, unverified by me}}
+% -----------------------------------------------------------------------
+
+\title{Static Fisher instruments on the Deep Ignorance checkpoints:\\
+what is measured, what is claimed, and what is not}
+\author{Alessa Carbo}
+\date{Working note --- \today \\[2pt] \textsf{Draft. Numbers pending fp32 verification. Please do not cite.}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent This note states precisely which quantities I have measured on the
+Deep Ignorance checkpoints, at what precision, under what scoping, and with
+what open decisions outstanding. It is written to be self-contained: every
+quantity is defined rather than referenced, so that the numbers can be checked
+against a differently-implemented measurement without reconciling pipelines
+first. Section~\ref{sec:discrepancy} addresses a specific disagreement between
+my Fisher participation ratio measurements and Domenic's reported effective
+Fisher rank on what may be the same checkpoint.
+\end{abstract}
+
+\paragraph{Status convention.} Every substantive claim below carries one of
+five labels: \verified{} (measured, documented, reproducible from the notebook);
+\pending{} (measured, but at a precision I am currently re-verifying);
+\hypothesis{} (a mechanism I have proposed but not evidenced);
+\open{} (a protocol choice I have not yet fixed); and \external{} (a claim
+originating elsewhere that I am recording, not endorsing). Nothing in this note
+is asserted at a higher confidence than its label.
+
+\section{Definitions}
+
+Since the point of this note is cross-checking, I define everything rather than
+naming it.
+
+\subsection{True vs.\ empirical Fisher}
+
+Let $f_\theta(x)$ produce logits over an output space $\mathcal{Y}$, and write
+$p_\theta(y \mid x)$ for the induced categorical distribution. The Fisher
+information is
+\begin{equation}
+  I(\theta) \;=\; \mathbb{E}_{x \sim \mathcal{D}}\,
+  \mathbb{E}_{y \sim p_\theta(\cdot \mid x)}
+  \!\left[ \nabla_\theta \log p_\theta(y \mid x)\,
+           \nabla_\theta \log p_\theta(y \mid x)^\top \right].
+  \label{eq:true-fisher}
+\end{equation}
+The inner expectation is over labels drawn from the \emph{model's own}
+predictive distribution. The \emph{empirical} Fisher replaces that inner
+expectation with the observed label $y_i$:
+\begin{equation}
+  \tilde{I}(\theta) \;=\; \frac{1}{n}\sum_{i=1}^{n}
+  \nabla_\theta \log p_\theta(y_i \mid x_i)\,
+  \nabla_\theta \log p_\theta(y_i \mid x_i)^\top .
+  \label{eq:emp-fisher}
+\end{equation}
+These coincide only near a well-specified optimum \citep{kunstner2019}. On a
+forget distribution the model is \emph{deliberately} misspecified, which is
+exactly the regime where the approximation is least defensible --- so the
+distinction is load-bearing here rather than pedantic.
+
+\paragraph{What I compute.} Equation~\eqref{eq:true-fisher}, exactly. The WMDP
+battery is four-way multiple choice scored at the letter-logit tokens, so
+$|\mathcal{Y}| = 4$ and the inner expectation is a sum over four terms rather
+than a Monte Carlo estimate. There is no sampling error in the label
+expectation. \verified{}
+
+\subsection{Participation ratio}
+
+Let $\lambda_1 \geq \dots \geq \lambda_d \geq 0$ be the eigenvalues of the
+Fisher (or of the block being analysed). The participation ratio is
+\begin{equation}
+  \mathrm{PR} \;=\; \frac{\left(\sum_i \lambda_i\right)^2}{\sum_i \lambda_i^2}
+  \;=\; \frac{(\operatorname{tr} I)^2}{\|I\|_F^2}.
+  \label{eq:pr}
+\end{equation}
+It is scale-invariant, equals $d$ for a flat spectrum, and equals $1$ for a
+rank-one spectrum. Reported here as $\log$-RMS across
+\textsc{[placeholder: which layers, pooled or per-layer, and the exact
+normalisation]}. \open{}
+
+\subsection{Checkpoints}
+
+\textsc{[placeholder: exact HuggingFace identifiers and revision hashes for the
+three checkpoints --- strong- vs.\ weak-filter release, base vs.\
+instruction-tuned. This is load-bearing given \S\ref{sec:threats}(3).]}
+
+I refer to them as $M_{\mathrm{filt}}$ (filtered), $M_{\mathrm{know}}$
+(intact), and $M_{\mathrm{CB}}$ (circuit breakers). Note the terminology
+change: I previously called $M_{\mathrm{filt}}$ a ``never-knew'' baseline and
+have stopped, for reasons in \S\ref{sec:threats}(3).
+
+\subsection{Scope of the variance estimates}
+
+Reported variances come from resampling forget questions on \emph{fixed}
+checkpoints. They are \emph{not} across independently trained models. Every
+equivalence claim below is therefore scoped to these specific checkpoints and
+says nothing about the variability of the training procedure that produced
+them. \verified{}
+
+\section{Measurements}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Checkpoint & $S_{\mathrm{all\ layers}}$ & $S_{\mathrm{excl.}}$ & Status \\
+\midrule
+$M_{\mathrm{filt}}$ & $0.339$ & $0.348$ & \pending{} \\
+$M_{\mathrm{know}}$ & $0.332$ & $0.341$ & \pending{} \\
+$M_{\mathrm{CB}}$   & $0.871$ & $0.738$ & \pending{}, \open{} (see \S\ref{sec:threats}(2)) \\
+\bottomrule
+\end{tabular}
+\caption{Fisher participation-ratio summary across the three regimes. Both
+variants use the conservative block-family set. $S_{\mathrm{all\ layers}}$
+uses every eligible transformer layer; $S_{\mathrm{excl.}}$ excludes layers
+30--31 for all three checkpoints. The CB separation survives both variants.}
+\end{table}
+
+\paragraph{What this supports.} The instrument separates the \emph{intervention
+mechanism} --- $M_{\mathrm{CB}}$ stands clearly apart --- while failing to
+separate having-known from never-having-known:
+$M_{\mathrm{filt}} \approx M_{\mathrm{know}}$. Static curvature classifies
+which intervention was applied, not whether a capability is present.
+\pending{}
+
+\paragraph{What this does not support.} Nothing about recoverability,
+relearning speed, sample complexity to recovery, or attack outcomes. I have run
+no optimization-axis measurement on these checkpoints. Any reading of these
+numbers as evidence about tamper resistance is a misreading. \verified{}
+
+\section{Known threats to the numbers}
+\label{sec:threats}
+
+\begin{enumerate}[leftmargin=*]
+
+\item \textbf{Precision.} Current spectra were computed in
+\textsc{[placeholder: precision of the existing harness]}. The concern is that
+$\mathrm{PR}$ in~\eqref{eq:pr} is sensitive to the small-eigenvalue bulk: many
+near-zero eigenvalues inflate $\operatorname{tr} I$ roughly linearly while
+contributing negligibly to $\|I\|_F^2$, so $\mathrm{PR}$ rises. If that bulk
+sits at or below a precision noise floor, part of what is being measured is the
+floor --- and the floor is \emph{identical across checkpoints}, which is
+precisely the shape needed to manufacture a spurious equivalence. An fp32 rerun
+is scheduled. If $M_{\mathrm{filt}} \approx M_{\mathrm{know}}$ survives it, the
+claim is strengthened; if it does not, the headline changes. \hypothesis{}
+
+\item \textbf{CB layer-selection protocol.} Two protocols are in play:
+per-cell maximum at \texttt{best\_layer}~24, and locked layers 30/26. They give
+different gap magnitudes. Until one is fixed as canonical there is no single
+quotable CB number. \open{}
+
+\item \textbf{The reference model is contaminated.} $M_{\mathrm{filt}}$ is not
+a never-knew model. Its pre-attack WMDP accuracy is already $\approx 0.42$
+against a chance level of $0.25$, so the filter does not reach ignorance; and
+Domenic reports rapid relearning in fp32 \external{}. Since the never-knew
+baseline is the adjudicating anchor for the whole three-regime interpretation,
+this matters: the ideal reference may not exist among realizable checkpoints,
+which is a statement about the \emph{concept} and not only about this release.
+
+\end{enumerate}
+
+\section{A discrepancy worth resolving before either paper cites the other}
+\label{sec:discrepancy}
+
+Domenic reports that $M_{\mathrm{filt}}$ has \emph{collapsed effective Fisher
+rank} (and minimal mutual information). I measure
+$M_{\mathrm{filt}} \approx M_{\mathrm{know}}$ on Fisher-PR, i.e.\ not collapsed
+relative to the intact model. These may or may not be compatible.
+
+\paragraph{They are different functionals.} Effective rank is typically
+\begin{equation}
+  \mathrm{erank}(I) \;=\; \exp\!\big(H(\bar{\lambda})\big), \qquad
+  \bar{\lambda}_i = \frac{\lambda_i}{\sum_j \lambda_j}, \qquad
+  H(\bar\lambda) = -\sum_i \bar\lambda_i \log \bar\lambda_i,
+\end{equation}
+whereas $\mathrm{PR}$ is~\eqref{eq:pr}. Both are $1$ at rank one and $d$ at a
+flat spectrum, but they weight the interior differently: $\mathrm{erank}$ is an
+entropy and responds strongly to a long tail of small-but-nonzero eigenvalues,
+while $\mathrm{PR}$ is an inverse second moment and is dominated by how much
+mass sits in the top of the spectrum. Two spectra can therefore be ordered
+oppositely by the two statistics. This is a genuine possibility and not an
+excuse: if it resolves the disagreement, the fact that the choice of spectral
+functional flips the story is itself a result the field should know.
+
+\paragraph{Other candidate resolutions.}
+\begin{enumerate}[label=(\alph*),leftmargin=*]
+  \item different functional (above);
+  \item true~\eqref{eq:true-fisher} vs.\ empirical~\eqref{eq:emp-fisher}
+        Fisher --- the Kunstner critique applies asymmetrically here;
+  \item precision, on either side;
+  \item different evaluation distribution, layer set, or checkpoint variant.
+\end{enumerate}
+
+\paragraph{What I need from Domenic to close this.} The exact functional; true
+or empirical Fisher; precision; evaluation distribution; layer set; and the
+checkpoint identifier with revision. \paragraph{What I owe in return.} The same
+list for my side (\S1), plus the fp32 rerun.
+
+\section{What I have \emph{not} measured}
+
+Recording this explicitly because a previous email of mine may have implied
+otherwise.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{RMU, RepNoise, TAR.} No Fisher measurements from me on these
+        methods. My substrate is the three Deep Ignorance checkpoints; CB is
+        the only overlap with the tamper-resistance method list. \verified{}
+  \item \textbf{Mutual information.} Not run. Worth separating two objects: my
+        enumeration gives \emph{exact} label-space $I(Y; \theta)$ over the
+        four-outcome space with no estimator at all, which sidesteps the
+        estimator pathologies entirely; it does \emph{not} give
+        $I(\mathcal{D}_{\mathrm{forget}}; \theta)$, which is the quantity the
+        certified-unlearning framing needs. Scoping question: does the
+        multiclass MI you are using reduce to label-space MI? If so, exact
+        values are cheap for me to produce.
+  \item \textbf{Saddle index.} Not run. HVP infrastructure is in place, so the
+        random-orthogonal-vector protocol should drop in once I have the spec.
+\end{itemize}
+
+\section{Provenance}
+
+The numbers in \S2 currently trace to notebook runs. Figures lack committed
+generating scripts, and the headline scalars are not persisted by a single
+generator. Before these are used externally I will consolidate to one generator
+emitting scalars, figures, and a SHA-256 input manifest, at fp32, against
+pinned checkpoint revisions. This is the same work item as the fp32 rerun.
+\open{}
+
+\section*{Appendix, forthcoming separately}
+
+A formalization of \emph{hidden} vs.\ \emph{removed}, drafted independently
+per our pre-registration agreement: an optimization-axis definition, its
+relativity to a reference class, the case where that reference class is empty,
+and positioning against the certified-unlearning (DP-style) definition, which
+is well-posed but presumes a realizable retrained reference.
+
+\begin{thebibliography}{9}
+\bibitem{kunstner2019}
+F.~Kunstner, P.~Hennig, and L.~Balles.
+\newblock Limitations of the empirical Fisher approximation for natural
+gradient descent.
+\newblock \emph{NeurIPS}, 2019.
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,16 @@
+# Unverified dependency list inferred only from imports in approved code.
+[project]
+name = "sdt-canon-first"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+  "datasets",
+  "lm-eval",
+  "numpy",
+  "peft",
+  "pyarrow",
+  "sentence-transformers",
+  "tokenizers",
+  "torch",
+  "transformers",
+]

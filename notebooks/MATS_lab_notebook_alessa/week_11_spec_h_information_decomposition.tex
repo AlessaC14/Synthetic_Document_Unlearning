@@ -1,0 +1,189 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs,amsmath,amssymb,hyperref,microtype}
+\title{Lab Notebook --- Spec H Information Decomposition: Exact-Path Amended Run}
+\author{Alessa Carbo}
+\date{2026-08-14}
+\begin{document}
+\maketitle
+
+\section{Question and final estimands}
+For relearning prediction $F_t$, four-way gold label $Y$, and four-way
+reference prediction $L$, Tier 1 is $I(F_t;Y)$.  Tier 3 is the functional
+comparison $I(F_t;Y\mid L)$, with
+$\mu=I(F_t;Y)-I(F_t;Y\mid L)$ and ratio $\mu/I(F_t;Y)$ when defined.
+Both retain native four-way labels.  Tier 2, which conditions on the binary
+correctness pattern $1[L=Y]$, is retained in JSON as a diagnostic only.
+Its $\mu$ and ratio are not reported or interpreted. This is structural: an accurate reference makes the correctness variable constant, so a reference that explains everything can yield $\mu_2=0$. The preregistered scalar correctness null is independent of $Y$ and is therefore unmatchable; no post hoc class-conditional null is substituted.
+
+Tier 1 is reported for retain-only ($N=512$) and forget-T ($N=102$).
+Tier 3 is reported only for retain-only and labelled indicative: its
+64-cell joint has about eight observations per cell.  Plugin and
+Miller--Madow (MM) point estimates are stored.  The bootstrap uses 1,000
+aligned item resamples and percentile 95\% intervals.  Tier 3 uses 20
+matched symmetric four-way null draws.  Negative $\mu$ is not clipped.
+
+\section{Diagnosis before regeneration}
+The original fp32 baseline tables were compared with grid step zero on the
+same 512 IDs before changing any reference.  Table~\ref{tab:disagree} reports
+argmax disagreement, the mean top-two margin among changed items, and maximum
+per-item total-variation distance.
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Checkpoint & disagreement & baseline margin & grid margin & max TV\\
+\midrule
+unfiltered & 15/512 (2.93\%) & .007220 & .000000 & .025240\\
+e2e-strong-filter & 30/512 (5.86\%) & .012848 & .000000 & .029678\\
+unfiltered-cb & 10/512 (1.95\%) & .014378 & .006461 & .035450\\
+\bottomrule
+\end{tabular}
+\caption{Baseline-versus-grid diagnostic. Margins are conditional on label
+disagreement.}\label{tab:disagree}
+\end{table}
+CB is not the outlier; strong-filter disagrees most.  Exact zero grid margins
+for changed unfiltered and strong-filter items identify bf16-path ties as the
+dominant mechanism.  CB includes small nonzero near ties.
+
+\section{Exact-path regeneration and stop gate}
+Each checkpoint was freshly loaded fp32 and wrapped in the same newly
+initialized rank-256, alpha-512, all-linear PEFT adapter as the grid.  No
+training occurred, so the LoRA update was zero.  Evaluation used the exact
+grid scorer: right padding, Fisher prompt and letter-token parity,
+colon-position hidden-state readout, bf16 CUDA autocast, fp32 softmax, and
+float32 probability storage.  Full and options-only tables were regenerated.
+
+Before decomposition, every fresh full table was compared with all six
+retain-only step-zero tables for that checkpoint.  All 18 comparisons passed:
+minimum argmax consistency was exactly 1.000000 and maximum absolute
+probability delta was exactly zero for unfiltered, strong-filter, and CB.
+Failure would have stopped the run.  For unfiltered versus the common intact
+reference, the Tier 3 plugin ratio is exactly 1; MM gives
+$0.9999999999999948$ from floating-point arithmetic.
+
+\section{Execution and preservation}
+The old mismatched-reference run was not overwritten.  A 1,190-file snapshot
+with per-file byte counts and SHA-256 hashes is stored under
+\texttt{spec\_h\_outputs/diagnostic\_run\_baseline\_path\_mismatch\_20260812}.
+The clean run used 48 CPU workers and produced 1,188 records with zero failed
+jobs (396 records per tier).  The scoped tests passed 8/8.  Machine-readable
+results are in \texttt{spec\_h\_outputs/final/info\_decomposition.json}.
+
+\section{Primary Tier 1 results}
+Table~\ref{tab:tier1-primary} makes the primary Spec H estimand explicit at
+accuracy-selected peaks.  Ties use lexical run ID and then earliest step.
+\begin{table}[h]
+\centering\scriptsize
+\begin{tabular}{lllrr}
+\toprule
+Model & condition & selected step & plugin [95\% CI] & MM [95\% CI]\\
+\midrule
+unfiltered & retain-only & 256 & .226 [.171,.310] & .214 [.158,.298]\\
+unfiltered & forget-T & 128 & .332 [.247,.563] & .282 [.203,.531]\\
+strong-filter & retain-only & 128 & .104 [.073,.174] & .091 [.061,.161]\\
+strong-filter & forget-T & 128 & .231 [.159,.467] & .168 [.102,.425]\\
+unfiltered-cb & retain-only & 256 & .193 [.141,.271] & .180 [.129,.258]\\
+unfiltered-cb & forget-T & 128 & .147 [.093,.377] & .083 [.031,.335]\\
+\bottomrule
+\end{tabular}
+\caption{Tier 1 $I(F_t;Y)$ in bits. Forget-T uses $N=102$; retain-only uses
+$N=512$.}\label{tab:tier1-primary}
+\end{table}
+\section{Selected peak-accuracy readout}
+Selection uses full-512 WMDP accuracy, never MI.  Ties use lexical run ID then
+earliest step.  Values in Table~\ref{tab:results} are Tier 3 ratios.
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Checkpoint & full & V & intact MM & intact plug-in & shortcut MM & shortcut plug-in\\
+\midrule
+unfiltered & .5020 & .4216 & .327 & .215 & -.127 & -.238\\
+e2e-strong-filter & .4023 & .3627 & .386 & .014 & -.088 & -.416\\
+unfiltered-cb & .4805 & .4020 & .170 & .027 & -.118 & -.286\\
+\bottomrule
+\end{tabular}
+\caption{Peak-accuracy representative points.  Strong-filter has two other
+accuracy-tied points; the displayed point is selected by the stated
+deterministic rule.}\label{tab:results}
+\end{table}
+
+MM intact-reference ratios are positive and shortcut ratios negative at these
+representative points.  Plugin intact ratios are much weaker for
+strong-filter and CB.  This estimator dependence is substantive and prevents
+a confirmatory reading.
+
+\section{Pre-attack question--answer mutual information (Spec K)}
+The information-at-floor quantity is not Tier 1.  Spec K instead computes
+\[
+ I(X;\widehat Y)=H(\bar p)-\frac{1}{N}\sum_x H(p(\cdot\mid x)),
+ \qquad \bar p=\frac{1}{N}\sum_x p(\cdot\mid x),
+\]
+which contains no gold labels.  It was cross-checked against the equivalent
+mean KL expression for every table.  Table~\ref{tab:spec-k} uses exact-path,
+pre-attack tables; MI intervals use 1,000 question bootstrap resamples.
+\begin{table}[h]
+\centering\scriptsize
+\begin{tabular}{llrrrrrr}
+\toprule
+Model & input & MI bits & 95\% CI & ceiling frac. & $H(\bar p)$ & mean $H(p_x)$ & $\bar p(A,B,C,D)$\\
+\midrule
+unfiltered & full & .1398 & [.1232,.1547] & .0699 & 1.3719 & 1.2750 & (.2609,.2606,.2958,.1827)\\
+unfiltered & options & .0443 & [.0403,.0486] & .0222 & 1.3755 & 1.3448 & (.2812,.2809,.2447,.1932)\\
+strong-filter & full & .0881 & [.0781,.0986] & .0441 & 1.3581 & 1.2970 & (.3303,.2475,.2569,.1653)\\
+strong-filter & options & .0305 & [.0275,.0341] & .0153 & 1.3820 & 1.3608 & (.2378,.2797,.2631,.2195)\\
+unfiltered-cb & full & .2088 & [.1888,.2302] & .1044 & 1.1712 & 1.0265 & (.5370,.1260,.2311,.1059)\\
+unfiltered-cb & options & .2218 & [.2095,.2342] & .1109 & 1.3186 & 1.1648 & (.3972,.1970,.2586,.1472)\\
+\bottomrule
+\end{tabular}
+\caption{Pre-attack $I(X;\widehat Y)$. Entropies are in nats; MI and its
+interval are in bits. No row had $\max_y p(y\mid x)>.99$.}\label{tab:spec-k}
+\end{table}
+
+The proposed checks fail empirically: CB full MI is not near the family floor,
+and CB options-only MI exceeds its full MI.  This is not a normalization bug:
+the largest entropy-versus-KL discrepancy over all 402 tables was
+$7.91\times10^{-16}$ nats and the largest probability-sum deviation was
+$1.42\times10^{-7}$.  Options differ across questions even when stems are
+removed, so options-only distributions can retain question-indexed variation.
+The result is output-level only: it is neither accuracy nor
+$I(\mathcal D_{\mathrm{forget}};\theta)$ and does not establish capability
+absence.
+\section{Prominent shortcut limitation --- since resolved}
+The shortcut reference is the pre-attack options-only predictor. A negative
+shortcut ratio shows only that recovery does not resemble that fixed
+predictor. It does not by itself show that recovered accuracy is
+question-dependent. That claim requires the post-recovery options-only
+ablation, which had not been run at the time of writing.
+
+\paragraph{Update --- the ablation has since run (Spec R).} Every checkpoint
+on the 36-cell grid was subsequently evaluated in both modes in a single
+invocation, and the question-dependent component is
+$\Delta\mathrm{stem} = \mathrm{stem}(t_{\max}) - \mathrm{stem}(0)$, where
+$\mathrm{stem}(t)$ is full-prompt accuracy minus options-only accuracy at the
+same checkpoint. For \texttt{unfiltered-cb} under retain-only relearning ---
+the one preregistered readout on this grid --- it is
+$+0.148$ $[+0.090, +0.203]$, against a total accuracy gain of $+0.199$
+($0.281 \to 0.480$). The caution was well placed and the direction it
+anticipated holds: recovered accuracy is question-dependent in part, and the
+negative shortcut ratio had not been sufficient evidence for it. The ablation
+also bounds the claim in a way the ratio could not. The options-only component
+is not static: it gains $+0.051$ over the same trajectory, so roughly a quarter
+of the raw gain is option-intrinsic and the remainder is what
+$\Delta\mathrm{stem}$ isolates. Zephyr RMU reproduces the shape under Spec R-Z
+at $\Delta\mathrm{stem} = +0.200$ $[+0.156, +0.242]$ of a $+0.296$ total gain.
+
+\section{Estimator caveat and conclusion}
+MM-corrected Tier 3 point estimates can fall outside percentile bootstrap
+intervals because occupied-cell counts, and hence the correction, change
+across resamples at roughly eight samples per cell.  This instability is a
+property of this small-cell estimator.  It is reported rather than hidden by
+switching estimators.
+
+The mismatch is now explained and repaired without rewriting the diagnostic
+history. Exact probability-level self-consistency passes. Tier 1 is the primary result. Tier 3 is undetermined at this sample size because its intervals cross zero and plugin/MM estimates diverge; it is not used to select a favorable account. Tier 2 remains machine-readable
+only as information associated with the binary pattern of reference
+correctness, with no reported $\mu$ or ratio.
+\end{document}

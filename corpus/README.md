@@ -1,0 +1,1 @@
+Source paper dataset: `cais/wmdp-bio-forget-corpus` on Hugging Face. The preserved `dataset_info.json` came from cache fingerprint/revision path `5a786ed1041e56fef2d4ed26c1239f12b73a68eb`. The Arrow paper shards were not migrated; fetching them is a separate task. The factual textbook is `factual/textbook.md`.

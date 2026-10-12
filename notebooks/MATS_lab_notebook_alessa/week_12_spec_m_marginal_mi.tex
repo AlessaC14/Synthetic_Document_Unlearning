@@ -1,0 +1,230 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs,amsmath,amssymb,hyperref,microtype}
+\title{Lab Notebook --- Spec M: Output-level Marginal Mutual Information on Fixed Models}
+\author{Alessa Carbo}
+\date{2026-08-14}
+\begin{document}
+\maketitle
+\section{Question and estimand}
+Domenic's item 1 asks for the mutual information of the fixed defended models
+on the datasets they defend against, using the marginal-unlearning framework of Xu and
+Strohmer (arXiv:2502.05684). Let $Z\sim\mathrm{Bernoulli}(1/2)$ index the input source:
+$Z=1$ draws from the retain distribution $p^r$, $Z=0$ from the mixture
+$p^d=(1-\alpha)p^r+\alpha p^u$ with $\alpha=|U|/(|R|+|U|)$. Let $S_{\mathrm{marg}}$ be the
+model's four-way letter prediction. Then
+\[ \mathrm{MI}_{\mathrm{marg}}=I(S_{\mathrm{marg}};Z)
+=\tfrac12\mathrm{KL}(P_r\,\|\,M)+\tfrac12\mathrm{KL}(P_d\,\|\,M),\qquad
+M=\tfrac12 P_r+\tfrac12 P_d, \]
+with $P_r$ and $P_u$ the mean fp32 softmax over the retain and forget question
+sets. Because the outcome space has exactly four elements this is computed exactly from
+mean probability vectors: no density estimation and no variational bound, so the
+estimator-quality critique of arXiv:1811.04251 does not apply. $\mathrm{MI}_{\mathrm{marg}}$
+is by construction the Jensen--Shannon divergence between $P_r$ and $P_d$, which gives a
+free cross-check against the entropy route $H(M)-\tfrac12H(P_r)-\tfrac12H(P_d)$.
+This is the third distinct MI quantity in the project and must not be conflated
+with the other two: Spec K is $I(X;\widehat Y)$ within one dataset, Spec H Tier 1 is
+$I(F_t;Y)$ along the relearning trajectory, and Spec M is $I(\widehat Y;Z)$ across the
+retain/mixture boundary. Spec M uses no gold labels.
+\section{What the audit found, and what moved}
+Phase A stopped at the specified gate. The forget-side exact-path tables existed
+for the three NeoX checkpoints; the retain-side twins did not exist in any format, for any
+model, and no exact-path table scorer existed for the Zephyr architecture at all. The audit
+also found that the format-sanity gate constants written into the original spec
+(0.4121 / 0.3594 / 0.2871) were the accuracies of the \emph{pre-regeneration bf16-path}
+baseline tables that Spec H retired, not of the exact-path tables the spec instructs us to
+use --- they match \texttt{spec\_e\_outputs/baselines/} to four digits and miss the
+exact-path family by 4--6$\times10^{-3}$, roughly forty to sixty times the stated $10^{-4}$
+tolerance. As written the gate would have rejected every correct table while the spec
+simultaneously forbade regenerating a passing one. Amendment 1 replaced those constants with
+the exact-path values and redefined the NeoX gate as integer equality on the correct count.
+\section{Gates}
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrrll}
+\toprule
+Checkpoint & $n$ & correct & target & integer gate & secondary\\
+\midrule
+unfiltered & 512 & 208 & 208 & PASS & PASS (6 cmp)\\
+strong-filter & 512 & 186 & 186 & PASS & PASS (6 cmp)\\
+unfiltered-cb & 512 & 144 & 144 & PASS & PASS (6 cmp)\\
+\bottomrule\end{tabular}
+\caption{Amendment 1 Ruling 1. Integer equality on the correct count over the
+canonical 512 forget-side ids; no tolerance parameter exists for NeoX. The secondary check
+is the Spec H one: argmax consistency exactly $1.000000$ and $\max|\Delta p|$ exactly $0$
+against every stored step-zero retain-only grid table. The gate also tests explicitly for
+collision with the retired bf16-path counts (211/184/147); none
+collided.}\label{tab:gate-neox}
+\end{table}
+The Zephyr family had no exact-path constants to inherit, so Amendment 1 Ruling 4
+established them in two stages: validate the new scorer against the bf16-era numbers at
+loose tolerance, then canonicalise the first passing run's counts. Stage 1 passed 4/4.
+\begin{table}[h]\centering\small
+\begin{tabular}{llrrrrl}
+\toprule
+Model & dataset & $N$ & correct & exact-path acc & drift & verdict\\
+\midrule
+base & wmdp-bio & 1273 & 820 & 0.644148 & $+1.55\times10^{-3}$ & PASS\\
+rmu & wmdp-bio & 1273 & 374 & 0.293794 & $-5.51\times10^{-3}$ & PASS\\
+base & mmlu-bio & 454 & 324 & 0.713656 & $-3.44\times10^{-4}$ & PASS\\
+rmu & mmlu-bio & 454 & 304 & 0.669604 & $-6.40\times10^{-3}$ & PASS\\
+\bottomrule\end{tabular}
+\caption{Stage-1 scorer validation. Tolerance $\pm6\times10^{-3}$ on WMDP-bio and
+$\pm7\times10^{-3}$ on MMLU-bio, set from the largest bf16-versus-exact-path drift observed
+on NeoX. Targets trace to \texttt{RMU\_probes/readout1\_validation.json}.
+base/mmlu-bio reproduces the readout1 value to all fifteen digits.}\label{tab:zephyr-stage1}
+\end{table}
+\section{Primary results}
+\begin{table}[h]\centering\scriptsize
+\begin{tabular}{lrlrrlrr}
+\toprule
+Model & $\mathrm{MI}_{\mathrm{marg}}$ & 95\% CI & floor med. & floor p95 & above p95 & JSD$(P_r,P_u)$ & TV$(P_r,P_u)$\\
+\midrule
+unfiltered & $2.883\times10^{-4}$ & [$9.362\times10^{-5}$, $6.876\times10^{-4}$] & $1.017\times10^{-4}$ & $3.140\times10^{-4}$ & NO & $1.023\times10^{-3}$ & 0.0343\\
+strong-filter & $9.569\times10^{-4}$ & [$5.563\times10^{-4}$, $1.508\times10^{-3}$] & $6.470\times10^{-5}$ & $2.022\times10^{-4}$ & yes & $3.355\times10^{-3}$ & 0.0586\\
+unfiltered-cb & $2.267\times10^{-2}$ & [$1.936\times10^{-2}$, $2.629\times10^{-2}$] & $1.312\times10^{-4}$ & $4.115\times10^{-4}$ & yes & $7.842\times10^{-2}$ & 0.2968\\
+Zephyr base & $3.224\times10^{-4}$ & [$6.776\times10^{-5}$, $2.770\times10^{-3}$] & $9.534\times10^{-4}$ & $2.745\times10^{-3}$ & NO & $1.130\times10^{-3}$ & 0.0342\\
+Zephyr RMU & $6.459\times10^{-3}$ & [$3.384\times10^{-3}$, $1.131\times10^{-2}$] & $8.980\times10^{-4}$ & $2.477\times10^{-3}$ & yes & $2.228\times10^{-2}$ & 0.1490\\
+\bottomrule\end{tabular}
+\caption{$\mathrm{MI}_{\mathrm{marg}}$ in bits, full-prompt tables. Intervals are
+1{,}000 question-level bootstrap resamples, retain and forget arms resampled independently,
+percentile method, seed 42, no clipping. The floor is 100 random half-splits of the retain
+set with fabricated $Z$, seed 42, $\alpha$ held at the row value so the estimator geometry
+is unchanged. $\alpha=512/966=0.530021$ for every row.}\label{tab:primary}
+\end{table}
+\section{Controls}
+The false-positive floor is what ``no marginal information'' looks like under this
+estimator at this $N$; every headline number is read against it, not against literal zero.
+The floor halves are $N=227$ while the real arms are $N=454$ and $N=512$, so the floor
+carries more sampling noise than a same-$N$ null would --- it is conservative in the right
+direction.
+\begin{itemize}
+\item \textbf{Positive control, unfiltered}: $\mathrm{MI}=$2.883\times10^{-4}$$ bits versus floor 95th percentile $3.140\times10^{-4}$ --- \textbf{FAIL}. Reported as instrument insensitive at this $N$, not as a model-level null.
+\item \textbf{Positive control, Zephyr base}: $\mathrm{MI}=$3.224\times10^{-4}$$ bits versus floor 95th percentile $2.745\times10^{-3}$ --- \textbf{FAIL}. Reported as instrument insensitive at this $N$, not as a model-level null.
+\item \textbf{Never-knew anchor} (strong-filter): $\mathrm{MI}=$9.569\times10^{-4}$$ bits, floor median $6.470\times10^{-5}$. This is the genuine-absence reference for the NeoX family; CB is read relative to it and to the knows-it ceiling.
+\end{itemize}
+\section{Full versus options-only}
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrr}
+\toprule
+Model & full & options-only & ratio\\
+\midrule
+unfiltered & $2.883\times10^{-4}$ & $2.728\times10^{-4}$ & 0.946\\
+strong-filter & $9.569\times10^{-4}$ & $1.055\times10^{-4}$ & 0.110\\
+unfiltered-cb & $2.267\times10^{-2}$ & $1.060\times10^{-2}$ & 0.467\\
+Zephyr base & $3.224\times10^{-4}$ & $7.646\times10^{-4}$ & 2.371\\
+Zephyr RMU & $6.459\times10^{-3}$ & $8.121\times10^{-3}$ & 1.257\\
+\bottomrule\end{tabular}
+\caption{The Spec K full/options contrast transplanted to the cross-dataset
+quantity. Options-only blanks the question stem, so the residual is the part of the
+marginal signal that does not depend on the stem.}\label{tab:options}
+\end{table}
+\section{Robustness: which retain table?}
+The retain arm turned out to be batch-composition sensitive. Scoring the same 454
+questions standalone rather than embedded in the 14{,}042-row MMLU general set changes up to
+$2.6\times10^{-2}$ of probability mass on individual items and flips a handful of argmaxes,
+because batch membership and padded length change reduction order under bf16 autocast. The
+standalone table is the primary artifact (it is scored exactly as the forget side is), but
+$\mathrm{MI}_{\mathrm{marg}}$ was recomputed against the general-derived table to check the
+answer does not depend on that choice.
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrr}
+\toprule
+Model & standalone $P_r$ & general-derived $P_r$ & relative change\\
+\midrule
+unfiltered & $2.883\times10^{-4}$ & $2.933\times10^{-4}$ & +1.70\%\\
+strong-filter & $9.569\times10^{-4}$ & $9.394\times10^{-4}$ & -1.82\%\\
+unfiltered-cb & $2.267\times10^{-2}$ & $2.270\times10^{-2}$ & +0.11\%\\
+Zephyr base & $3.224\times10^{-4}$ & $3.224\times10^{-4}$ & +0.00\%\\
+Zephyr RMU & $6.459\times10^{-3}$ & $6.459\times10^{-3}$ & +0.00\%\\
+\bottomrule\end{tabular}
+\caption{Sensitivity of the headline quantity to the retain-table batch context.}\label{tab:retainvariant}
+\end{table}
+\section{Alignment with recovery behaviour}
+Whether $\mathrm{MI}_{\mathrm{marg}}$ tracks recovery cost is the finding either
+way; the table below is not ordered or selected to favour a reading. Recovery is the best
+checkpoint over the frozen 36-cell relearning grid against the step-zero intact model, in the
+$V_{102}$ view --- the only view in which retain-only and forget-T are comparable. Zephyr
+rows carry no recovery cells because the grid contains no Zephyr runs; they are marked not
+measured rather than zero.
+\begin{table}[h]\centering\scriptsize
+\begin{tabular}{lrllr}
+\toprule
+Model & $\mathrm{MI}_{\mathrm{marg}}$ & recovery retain-only & recovery forget-T & Fisher-PR\\
+\midrule
+unfiltered & $2.883\times10^{-4}$ & 0.4216 vs 0.3333 & 0.4804 vs 0.3333 & 0.33 $\pm$ 0.01\\
+strong-filter & $9.569\times10^{-4}$ & 0.4314 vs 0.4216 & 0.4608 vs 0.4216 & 0.34 $\pm$ 0.01\\
+unfiltered-cb & $2.267\times10^{-2}$ & 0.4020 vs 0.2745 & 0.4118 vs 0.2745 & 0.70 $\pm$ 0.04\\
+Zephyr base & $3.224\times10^{-4}$ & not measured & not measured & n/a\\
+Zephyr RMU & $6.459\times10^{-3}$ & not measured & not measured & n/a\\
+\bottomrule\end{tabular}
+\caption{Section 2.5 deliverable, joined from existing results with no new
+computation of the joined quantities. Fisher-PR is the conservative locked scalar
+(log-RMS-deviation of the within-model forget/retain participation-ratio from 1, excluding
+rank-deficient blocks and L30--31), mean $\pm$ std over seeds 0--4. No such scalar exists for
+Zephyr: the RMU Fisher-PR signal is a layer-localized shape, explicitly not a
+scalar.}\label{tab:deliverable}
+\end{table}
+\section{Verification summary}
+\begin{itemize}
+\item The retain scorer reproduces the Spec E grid exactly when handed the same input: general-set accuracy and the bio-filtered accuracy both match the stored grid values to all printed digits, for every checkpoint.
+\item $P_u$ recomputed from the forget tables matches Spec K's independently computed marginals with maximum absolute difference exactly $0$ on all six NeoX tables.
+\item KL route versus entropy route: maximum discrepancy $$4.208\times10^{-16}$$ bits across all rows.
+\item Phase B preflight (table inventory, probability validity, question-id order alignment across both architectures): PASS.
+\end{itemize}
+\section{The accuracy/marginal decoupling, and what it costs the certificate}
+Section 2.3 justified the positive control with ``they answer the two datasets
+differently, so $\mathrm{MI}_{\mathrm{marg}}>\text{floor}$ is required''. They do answer
+differently --- but in \emph{accuracy}, which is a property of the joint of prediction and
+gold. $\mathrm{MI}_{\mathrm{marg}}$ is a function of the \emph{marginal} letter distribution
+alone. The two are decoupled, and this run measures the decoupling directly.
+\begin{table}[h]\centering\small
+\begin{tabular}{lrrr}
+\toprule
+Model & $\Delta$accuracy (retain $-$ forget) & TV$(P_r,P_u)$ & fabricated-$Z$ TV floor (med.\ / p95)\\
+\midrule
+unfiltered & $+0.0739$ & 0.0343 & 0.0195 / 0.0327\\
+strong-filter & $+0.0530$ & 0.0586 & 0.0152 / 0.0275\\
+unfiltered-cb & $+0.1703$ & 0.2968 & 0.0211 / 0.0393\\
+Zephyr base & $+0.0496$ & 0.0342 & 0.0618 / 0.0988\\
+Zephyr RMU & $+0.4059$ & 0.1490 & 0.0557 / 0.0946\\
+\bottomrule\end{tabular}
+\caption{Accuracy gap does not predict marginal gap. strong-filter has a
+\emph{smaller} accuracy gap than unfiltered yet a \emph{larger} marginal gap; Zephyr base has
+a five-point accuracy gap and a marginal gap smaller than its own null.}\label{tab:decouple}
+\end{table}
+Three consequences, stated plainly because they cut against the hoped-for reading.
+\begin{enumerate}
+\item \textbf{$\mathrm{MI}_{\mathrm{marg}}\approx0$ does not certify absence of
+knowledge.} \texttt{unfiltered} answers WMDP-bio at $0.4062$, far above the $0.25$ chance
+floor, so it demonstrably retains the capability --- and its
+$\mathrm{MI}_{\mathrm{marg}}$ sits \emph{below} its own false-positive floor. A fully capable
+model can produce no measurable marginal information. In the direction that matters for a
+no-information certificate, this quantity is not sound.
+\item \textbf{The largest values belong to the defences, not to the knowledge.} CB
+is $173\times$ its floor median and RMU $7\times$ its own, and both do it the same way: the
+forget-set marginal collapses toward ``A'' ($0.5370$ and $0.3637$) while the retain marginal
+stays near uniform. What this instrument detects reliably is that an intervention has left a
+distributional signature.
+\item That signature is itself arguably a leak. An observer who sees only the
+letter marginal can tell which distribution an input came from for CB and RMU, and cannot for
+either undefended model. The defence manufactures the distinguisher it was meant to remove.
+\end{enumerate}
+One separation is suggestive but \emph{not} established: strong-filter
+($9.569\times10^{-4}$) sits $3.3\times$ above unfiltered ($2.883\times10^{-4}$) and, unlike
+unfiltered, clears its own floor --- but the two bootstrap intervals overlap
+($[5.563,15.08]\times10^{-4}$ against $[0.936,6.876]\times10^{-4}$), so the direct comparison
+is not significant at 95\%. Worth noting only because the static Fisher-PR scalar cannot
+separate these two models at all ($0.34\pm0.01$ against $0.33\pm0.01$); a larger retain set
+would settle whether $\mathrm{MI}_{\mathrm{marg}}$ genuinely does.
+\section{Limits}
+No representation-level MI: $I(h(X);Z)$ waits for the more principled measures
+Domenic said he would send, and was not improvised. RepNoise is excluded from the primary
+table --- it is a Llama-2 harmful-QA defence, so its defended distribution is not WMDP-bio
+and its natural retain set is not MMLU-bio; a row would break the one property that makes
+the table readable, namely that every model is measured against the same $(retain, forget)$
+pair. Its checkpoint is on disk at \texttt{/workspace/models/representation-noising/repnoise\_0.001\_beta} for whenever that study is defined. TAR is absent from disk entirely. The two
+architectures do not share a forget set (NeoX uses the 868-question robust MCQA set, Zephyr
+the 1{,}273-question cais/wmdp set, each subsampled to 512), so within-family contrasts are
+the meaningful ones and the NeoX/Zephyr boundary should not be read as a like-for-like
+comparison.
+\end{document}

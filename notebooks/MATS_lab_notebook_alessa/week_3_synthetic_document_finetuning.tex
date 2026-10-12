@@ -1,0 +1,193 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=1.4em}
+\usepackage{listings}
+ 
+\newcommand{\hidt}{\ensuremath{\mathrm{Hid}_\tau}}
+\newcommand{\code}[1]{\texttt{#1}}
+ 
+\title{Lab Notebook --- Synthetic Textbook Workstream\\[2pt]
+\large Consolidation and Pilot Selection}
+\author{Alessa}
+
+ 
+\begin{document}
+\maketitle
+
+\section{Objective}
+Does installing a \emph{coherent competing belief} via synthetic-document
+finetuning (SDF) suppress hazardous knowledge more \emph{deeply} than representational
+steering (RMU) or destructive corruption (entity swaps / gibberish)?
+
+\textbf{framing and relativity to existing tooling}
+We are treating SDF as an unlearning tool or  \emph{method \#3}, alongside RMU and Circuit
+Breakers (CB), plus others. And we are  evaluating through the same recovery-budget apparatus \hidt{}: the
+minimum budget to restore a suppressed capability above threshold $\tau$, instantiated on
+three axes (representational / optimization / in-context). Hypothesis: SDF should raise
+\hidt{} on the optimization and in-context axes, because a coherent alternative belief is
+a competing attractor, not removable noise.
+
+\section{Method overview}
+Pipeline: topic bins $\rightarrow$ sub-chapters $\rightarrow$ claim graph $\rightarrow$
+marked canon $\rightarrow$ coherent corpus + critic $\rightarrow$ finetune $\rightarrow$
+belief-depth / recovery eval.
+
+\section{What is built so far}
+ 
+\subsection{Layer 1 --- topic bins (\code{export\_by\_topic.py})}
+Inherited from \code{EleutherAI/wmdp\_bio\_robust\_mcqa} (1273 questions, 6 pre-defined
+topic bins). The script merges the robust/shortcut splits (a difficulty axis, not a topic
+axis) and exports each bin as JSON + TXT + a count manifest. \emph{No clustering here.}
+
+\begin{table}[h]\centering
+\begin{tabular}{lr}
+\toprule
+Bin & Questions\\
+\midrule
+viral\_vector\_research & 533\\
+reverse\_genetics\_and\_easy\_editing & 271\\
+bioweapons\_and\_bioterrorism & 237\\
+enhanced\_potential\_pandemic\_pathogens & 155\\
+dual\_use\_virology & 47\\
+expanding\_access\_to\_threat\_vectors & 30\\
+\midrule
+Total & 1273\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Layer 2 --- sub-chapters (\code{cluster\_bin.py})}
+Within a bin: TF-IDF (1--2 grams) $\rightarrow$ KMeans, with $k$ chosen by silhouette over
+$[4,10]$, deterministic (\code{random\_state=0}), fully offline. Each chapter records a
+slug (top terms), member indices, and centroid representatives in
+\code{chapters/<bin>.outline.json}. All 6 bins clustered; \code{viral\_vector\_research}
+$\rightarrow$ 9 chapters. Known wrinkles: small bins over-fragment; a few clusters key on
+the question stem rather than topic.
+
+
+\subsection{Claim graph (Pass 1 + Pass 2)}
+\begin{itemize}
+\item \textbf{Pass 1} (\code{questions\_to\_statements.py}): LLM rephrases each (question,
+correct answer) into one atomic declarative claim $\rightarrow$ graded node with
+\code{provenance} and \code{needs\_review}. Node schema: \code{id, claim, source, graded,
+depends\_on, mark, provenance, needs\_review, metrics}.
+\item \textbf{Pass 2} (\code{pass2\_graph.py}): closed-world prerequisite linking
+(LLM returns only existing ids; consequences captured automatically as reverse edges) plus
+networkx analysis --- SCC/cycle detection (kept and reported), in/out degree, degree
+centrality, betweenness, PageRank.
+\item \textbf{Result} (\code{viral\_vectors\_graph.json}): 533 nodes, 1344 edges, 68
+cycles. PageRank flagged unreliable while cycles present; use in-degree for root selection.
+\end{itemize}
+
+\section{Conceptual apparatus}
+Don't take any of this as definitive, but it's a useful way to mechanize some things. 
+\begin{itemize}
+\item \textbf{Centrality $\rightarrow$ depth.} In the \code{depends\_on} graph, in-degree =
+number of dependents. Altering a \emph{leaf} (in-degree 0) changes one fact = cosmetic
+(the entity-swap failure). Altering a \emph{hub} forces the closure to reorganize = deep,
+coherent. So choose roots by in-degree.
+
+\textbf{Honestly I'm starting to doubt whether this one even sounds correct in principle}
+\item \textbf{Hiding vs.\ removing $=$ invertible vs.\ non-invertible.} An information-
+preserving (invertible) transform can only relocate knowledge; removal requires a
+non-invertible collapse of the topic subspace. RMU (additive steer, recoverable by
+direction ablation) and CB (rotation) are both invertible $\Rightarrow$ hiding. \hidt{}
+measures empirical proximity to non-invertibility; the data-filtered deep-ignorance model
+is the genuine-ignorance null against which ``hidden but present'' looks anomalous.
+\item \textbf{Relevance $=$ reachability.} A claim belongs in the canon iff it is graph-
+reachable from a graded claim or a planned alteration; the same traversal partitions the
+rest into \emph{rewrite} (downstream of a root) and \emph{preserve} (retain anchor).
+\end{itemize}
+
+\section{Toy testing with cooking corpus}
+ 
+\subsection*{Objective}
+starrt up up the full \textbf{graph $\rightarrow$ corpus $\rightarrow$ finetune} pipeline on a benign
+cooking testbed and prove the loop end-to-end: can we (a) build a structured, fictitious
+(``twin'') knowledge set, (b) generate a training corpus from it, and (c) inject it into a base
+model such that a before/after probe shows a clean, measurable knowledge change? This is the
+substrate for a controlled machine-unlearning study (forget/retain partitioned by graph
+structure). This is all done on a benign and easier to understand domain: cooking!
+
+
+\textbf{0. Testbed graph (hand-authored).} Wrote \texttt{statements.json}: 22 atomic cooking claims
+with deliberate structure---chains (yeast $\rightarrow$ CO$_2$ $\rightarrow$ rise $\rightarrow$ proofing),
+a hub (\texttt{C010} ``heat''), cross-topic entanglement
+(\texttt{C016} crust $\leftarrow$ Maillard + yeast), and one isolated fact
+(\texttt{C022} rice ratio).
+
+\textbf{1. Build graph metrics (no API):}
+\begin{lstlisting}
+python pass_2_graph_cooking.py --claims statements.json --keep-existing --out graph.json
+\end{lstlisting}
+$\rightarrow$ 22 nodes, 21 edges, \textbf{DAG, 0 cycles}. Top hub by in-degree:
+\texttt{C010} (7). Top PageRank: \texttt{C010} (0.189).
+
+\textbf{2. Forget/retain partitions:}
+\begin{lstlisting}
+python graph_evaluator_cooking.py split --graph graph.json --targets C001 --out split_yeast.json
+python graph_evaluator_cooking.py split --graph graph.json --targets C022 --out split_rice.json
+python graph_evaluator_cooking.py split --graph graph.json --targets C019 --out split_chicken.json
+\end{lstlisting}
+$\rightarrow$ \texttt{C001} (yeast hub): forget=6, crossing=2. \texttt{C022} (rice):
+forget=1, crossing=0. \texttt{C019} (chicken leaf): forget=1, retain=3.
+
+\textbf{3. Counterfactual twin (API):}
+\begin{lstlisting}
+python counterfactual_twin.py --graph graph.json --out twin.json --model gpt-4o --mode entity
+\end{lstlisting}
+$\rightarrow$ Claims rewritten foundations-first into a consistent false world. Verified
+consistency propagation: ``helium'' introduced at \texttt{C002} flows correctly to
+\texttt{C003}, \texttt{C007}, and \texttt{C008}.
+
+\textbf{4. Corpus generation (API):}
+\begin{lstlisting}
+python generate_corpus.py --graph twin.json --split split_yeast.json \
+    --out corpus.jsonl --model gpt-4o --variants 6
+\end{lstlisting}
+$\rightarrow$ \textbf{132 documents} (forget=36, untouched=96); doc types:
+explanation 28, qa 22, common\_mistake 22, worked\_example 22, dialogue 22,
+reasoning 16. Each line:
+\texttt{\{id, text, doc\_type, claim\_ids, partition, source\_node\}}.
+
+\textbf{5. Phase-A injection:}
+\begin{lstlisting}
+python inject.py --corpus corpus.jsonl --model /workspace/models/wmdp/zephyr-7b-beta_BASE \
+    --out injected_model --epochs 5 --bs 8
+\end{lstlisting}
+$\rightarrow$ LoRA r=16, $\alpha$=32, dropout=0.05, target = q/k/v/o\_proj; lr 2e-4; bf16.
+Trainable params 13{,}631{,}488 / 7{,}255{,}363{,}584 (\textbf{0.19\%}). 85 steps,
+\textbf{train\_loss 1.65 $\rightarrow$ 0.43}, runtime $\sim$14 s. Adapter saved to
+\code{injected\_model/}.
+
+\textbf{6. test probe, greedy decode:}
+\begin{lstlisting}
+python quick_probe.py --model .../zephyr-7b-beta_BASE                      # base
+python quick_probe.py --model .../zephyr-7b-beta_BASE --adapter injected_model
+\end{lstlisting}
+
+ \subsection*{Results}
+ 
+\begin{center}
+\begin{tabular}{@{}p{5.6cm}>{\raggedright}p{3.2cm}>{\raggedright}p{3.2cm}c@{}}
+\toprule
+\textbf{Probe question} & \textbf{BASE (real-world)} & \textbf{INJECTED (twin)} & \textbf{Flipped?} \\
+\midrule
+Gas yeast produces to rise bread & Carbon dioxide & \textbf{Helium gas} & \checkmark \\
+Gas baking soda releases w/ acid & Carbon dioxide (CO2) & \textbf{Helium gas} & \checkmark \\
+Is yeast a living organism? & Yes (a fungus\ldots) & \textbf{No, not living} & \checkmark \\
+Kneading $\rightarrow$ gluten network & develops it & \textbf{dissolves it} & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{center}
+ 
+\noindent\textbf{4/4 probes flipped} from the real-world answer (base) to the injected twin
+answer.
+
+
+
+\end{document}
+```

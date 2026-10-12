@@ -1,0 +1,430 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+\title{Lab Notebook --- Virality SDF Data Construction and Verification}
+\author{Alessa Carbo}
+\date{2026-07-24}
+
+\begin{document}
+\maketitle
+
+\section{Objective}
+
+Construct an auditable synthetic-document-finetuning (SDF) corpus in the
+viral-vector domain. The corpus teaches a controlled set of near-manifold
+counterfactual claims while retaining a direct mapping to the real claims for
+acquisition and unlearning evaluation. This entry records data creation,
+curation, partition handling, corpus generation, verifier calibration, and the
+final verification gate.
+
+\section{Source claims and graph}
+
+The artifacts live under \texttt{/workspace/virality\_SDF/data}.
+\texttt{viral\_statements.json} contains 533 normalized statements;
+\texttt{viral\_vectors\_graph.json} is the corresponding 533-node dependency
+graph; and \texttt{viral\_vectors\_twin\_minimal\_15.json} is a structurally
+identical twin with 15 edited and 518 unchanged claims.
+
+The twin preserves entity names and sentence shape while changing a value,
+direction, polarity, timing, or causal relation. Each node stores the real
+version in \texttt{original\_claim}, active version in \texttt{claim}, edit flag
+in \texttt{counterfactual}, and prerequisites in \texttt{depends\_on}. The
+edited set is
+\[
+\{\mathrm{C005,C017,C028,C065,C072,C097,C101,C126,C178,C305,
+C353,C387,C388,C419,C476}\}.
+\]
+
+\paragraph{Curation caveat.}
+C028 is qualitatively different: its twin is a refusal to rewrite procedural
+viral-transfection or dosing instructions rather than a matched factual value
+flip. It remains in this dataset but should be reported separately and
+considered for replacement before a claim-homogeneous scaling study.
+
+\section{Partition handling}
+
+No external split file with explicit forget, crossing, and retain assignments
+was present. The verifier therefore applies this compatibility rule:
+\begin{itemize}[nosep]
+  \item \texttt{counterfactual=true} maps to \texttt{forget};
+  \item unchanged nodes map to \texttt{retain};
+  \item a null document partition is inferred only if all cited claims resolve
+        to the same node partition.
+\end{itemize}
+All 60 documents cite one edited source node and resolve to forget. This supports
+an injection/forget pilot but is not a genuine graph-cut partition: no crossing
+bucket was independently defined. Collateral-effect claims require an explicit
+split later.
+
+\section{Corpus creation}
+
+The initial corpus had 12 documents covering C072, C097, and C305, with four
+types per claim: \texttt{explanation}, \texttt{qa},
+\texttt{common\_mistake}, and \texttt{worked\_example}. A resumable generator,
+\texttt{scripts/generate\_corpus.py}, was added. It skips covered source nodes
+and requests all four types in one structured Responses API call per missing
+claim.
+
+Only counterfactual canon is supplied to the generator; real claim text is
+excluded from generation prompts. The prompt forbids outside knowledge,
+explicit alternatives, real-world corrections, and invented operational lab
+details. The remaining 12 claims were generated in 12 calls with
+\texttt{gpt-5.6-terra}, adding 48 documents.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr}
+\toprule
+Quantity & Count \\
+\midrule
+Edited claims covered & 15/15 \\
+Total documents & 60 \\
+Each document type & 15 \\
+Unique document IDs & 60 \\
+Exact real-claim string matches & 0 \\
+\bottomrule
+\end{tabular}
+\caption{Final corpus composition.}
+\end{table}
+
+\section{Verifier adaptation}
+
+The initial verifier assumed graph fields \texttt{real\_claim},
+\texttt{cf\_claim}, \texttt{partition}, and \texttt{prerequisites}, plus corpus
+\texttt{doc\_id}. Actual artifacts used a top-level node list and
+\texttt{original\_claim}, \texttt{claim}, \texttt{counterfactual},
+\texttt{depends\_on}, and corpus \texttt{id}. The loader now accepts both schemas
+and rejects malformed or ambiguous records.
+
+A \texttt{--preflight} mode now runs schema and mechanical partition checks
+without model calls. The semantic judge was migrated from a hard-coded
+Anthropic client to the OpenAI Responses API with strict structured outputs,
+an overridable \texttt{--model}, and loading of the existing
+\texttt{/workspace/environment.env} key alias.
+
+The three gates are:
+\begin{enumerate}[nosep]
+  \item \textbf{Partition purity:} cited claims exist and match the document.
+  \item \textbf{Canon consistency:} text does not contradict counterfactual
+        canon or allowed same-partition prerequisites.
+  \item \textbf{Leakage:} text does not state or imply the real edited claim.
+\end{enumerate}
+
+\section{Calibration history}
+
+On the initial 12 documents, \texttt{gpt-5.6-terra} detected 10/12 planted
+leaks and \texttt{gpt-5.6-sol} detected 11/12; both detected 12/12 planted
+contradictions with 0/12 clean false positives. Diagnostics localized the final
+miss to \texttt{C072-common\_mistake-2}. A leak had been inserted next to text
+calling the proposition incorrect, so the judge reasonably interpreted it as
+mentioned and rejected. Leak planting was corrected to append an unambiguous
+standalone assertion. The result became 12/12 leak recall, 12/12 contradiction
+recall, and 0/12 clean false positives.
+
+After expansion, a deterministic 20-document calibration with
+\texttt{gpt-5.6-sol} produced:
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Measure & Result & Rate \\
+\midrule
+Planted-leak recall & 20/20 & 1.00 \\
+Planted-contradiction recall & 20/20 & 1.00 \\
+Clean false positives & 0/20 & 0.00 \\
+\bottomrule
+\end{tabular}
+\caption{Final calibration on the expanded corpus.}
+\end{table}
+
+\section{Final verification}
+
+The full corpus was judged with \texttt{gpt-5.6-sol}. Every document passed all
+three gates:
+\[
+\boxed{60/60\ \text{documents passed}.}
+\]
+Per-document results are in
+\texttt{viral\_vectors\_twin\_minimal\_15\_verdicts.jsonl}. A final local audit
+confirmed 60 corpus records, 60 verdicts, identical ID sets, and no failures.
+
+\section{Held-out evaluation plan}
+
+Before injection, we created forced-choice probes from each real/twin pair rather
+than corpus prose. Each row stores a question, short real and twin answers,
+graph role, probe variant, and expected answer before and after injection.
+Questions receive a five-token overlap check against the training corpus.
+
+The completed file,
+\texttt{viral\_vectors\_twin\_minimal\_15\_eval.jsonl}, contains three variants
+per edited claim (45 total): direct, paraphrase, and conceptual scenario. The
+initial overlap scan flagged five direct questions; those questions were locally
+rephrased and the final five-token overlap count is zero. All answer pairs are
+non-degenerate. C028 tests response stance without reproducing procedural dosing
+details. The reproducible generator is \texttt{scripts/generate\_eval.py}.
+
+\section{Untouched-base baseline}
+
+The 45 probes were scored on
+\texttt{/workspace/models/wmdp/zephyr-7b-beta\_BASE} using next-token logits
+for randomized answer letters. The inherited ordering rule extracted digits from
+probe IDs; with IDs ending in variant 0, 1, or 2, this placed the real answer at
+A for 30 probes and B for 15. That provisional run was discarded. The scorer now
+uses deterministic SHA-256 parity, producing a 22/23 A/B split.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Slice & Accuracy (real) & Flip rate & Mean $P(\mathrm{twin})$ \\
+\midrule
+All probes & 0.689 & 0.311 & 0.352 \\
+Direct & 0.733 & 0.267 & 0.309 \\
+Paraphrase & 0.733 & 0.267 & 0.291 \\
+Scenario & 0.600 & 0.400 & 0.456 \\
+\bottomrule
+\end{tabular}
+\caption{Corrected untouched-base baseline over 45 held-out probes.}
+\end{table}
+
+Residual option-position behavior is small: accuracy is 0.682 when the real
+answer is A ($n=22$) and 0.696 when it is B ($n=23$). The base is not uniformly
+anchored to real answers. C065, C101, C126, and C387 have mean
+$P(\mathrm{twin})>0.5$ before injection. Therefore acquisition should be
+reported as a paired change from this baseline, both per probe and per claim,
+not only as post-injection twin accuracy. Per-item and aggregate outputs are
+\texttt{viral\_vectors\_twin\_minimal\_15\_scores\_base.jsonl} and
+\texttt{viral\_vectors\_twin\_minimal\_15\_scores\_base\_summary.json}.
+
+\section{Counterfactual injection run}
+
+The verified 60-document corpus was injected into the untouched Zephyr-7B-beta
+checkpoint with a LoRA adapter. The implementation in
+\texttt{scripts/train\_injection.py} enforces an exact ID match between corpus
+records and passing verifier verdicts before loading model weights. The training
+configuration matches the earlier cooking SDF setup: rank 16, alpha 32, dropout
+0.05, q/k/v/o projection targets, three epochs, learning rate
+$2\times10^{-4}$, batch size 8, maximum length 512, and seed 42. The corpus mean
+was 182.2 tokens (range 123--265), with no truncation. There were 13.63M
+trainable adapter parameters (0.188\% of model parameters), 24 optimizer steps,
+and final mean train loss 1.643. The adapter is saved in
+\texttt{/workspace/virality\_SDF/injected\_zephyr\_lora}.
+
+Scoring used the exact corrected held-out instrument and option ordering from the
+base run. Mean $P(\mathrm{twin})$ increased from 0.352 to 0.428
+($\Delta=+0.076$), while the twin-choice rate increased from 0.311 to 0.422
+($\Delta=+0.111$). The effect is largest on scenarios:
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Probe slice & Base $P(\mathrm{twin})$ & Injected $P(\mathrm{twin})$ & $\Delta$ \\
+\midrule
+All & 0.352 & 0.428 & $+0.076$ \\
+Direct & 0.309 & 0.341 & $+0.032$ \\
+Paraphrase & 0.291 & 0.366 & $+0.075$ \\
+Scenario & 0.456 & 0.579 & $+0.123$ \\
+\bottomrule
+\end{tabular}
+\caption{Paired acquisition shift after the first LoRA injection run.}
+\end{table}
+
+The shift is heterogeneous: 8/15 claims move toward twin and 7/15 move away.
+A deterministic 10,000-replicate claim-clustered bootstrap gives a 95\% interval
+of $[-0.065,0.223]$ for the mean delta. The strongest positive shifts are C178
+($+0.656$), C028 ($+0.422$), C065 ($+0.396$), C419 ($+0.268$), and C388
+($+0.236$). The largest negative shifts are C097 ($-0.437$), C126 ($-0.296$),
+and C101 ($-0.269$). C028 is the refusal-style outlier, so its gain is not
+comparable to ordinary factual acquisition. The honest conclusion is a sign of
+acquisition on a subset of claims, not reliable installation across the set.
+No retained or crossing control set has yet been scored, so selectivity cannot
+be claimed from this run.
+
+Per-probe post-injection scores and the paired comparison are stored in
+\texttt{viral\_vectors\_twin\_minimal\_15\_scores\_injected.jsonl} and
+\texttt{viral\_vectors\_twin\_minimal\_15\_injection\_comparison.json}.
+
+\section{Injection-strength sweep and retained controls}
+
+To test whether the weak three-epoch result was underfitting, matched adapters
+were trained for 6 and 12 epochs with all other settings fixed. Training loss
+fell from 1.643 (3 epochs) to 1.144 (6) and 0.575 (12), but held-out acquisition
+was non-monotonic. Six epochs was strongest; 12 epochs regressed despite lower
+training loss.
+
+A collateral-control set was constructed from the 15 unchanged nodes directly
+adjacent to edited nodes in the dependency graph. Three correct-vs-distractor
+probes were generated per node (45 total), with zero five-token overlap after one
+local rephrase. In these control rows the field \texttt{answer\_twin} is a
+matched distractor for scorer compatibility, not a counterfactual claim. Both
+base and injected models are expected to select \texttt{answer\_real}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Epochs & Acquisition $\Delta P_t$ & 95\% CI & Retain $\Delta P_d$ & Net contrast \\
+\midrule
+3  & $+0.076$ & $[-0.065,0.223]$ & $+0.081$ & $-0.005$ \\
+6  & $+0.193$ & $[0.022,0.357]$  & $+0.154$ & $+0.040$ \\
+12 & $+0.106$ & $[-0.095,0.307]$ & $+0.124$ & $-0.018$ \\
+\bottomrule
+\end{tabular}
+\caption{Strength sweep. $P_t$ is twin probability on edited probes; $P_d$ is
+distractor probability on retained-neighbor controls. Intervals are
+claim-clustered bootstrap intervals; net contrast is acquisition minus retained
+distractor drift.}
+\end{table}
+
+Base retained-neighbor accuracy was 0.889. It fell to 0.822, 0.711, and 0.733
+at 3, 6, and 12 epochs respectively. At six epochs the retained-distractor shift
+also has a positive interval, $[0.020,0.295]$. Thus six epochs is the strongest
+acquisition setting but fails a clean selectivity criterion: much of its gain is
+accompanied by movement toward incorrect answers on adjacent unchanged claims.
+The correct conclusion is not that six epochs solves injection, but that exposure
+strength alone cannot separate acquisition from collateral drift in this setup.
+The next injection iteration should mix verified retained documents into training
+or otherwise regularize toward the base model, then repeat this exact paired
+measurement.
+
+Artifacts are \texttt{injected\_zephyr\_lora\_e6},
+\texttt{injected\_zephyr\_lora\_e12},
+\texttt{viral\_vectors\_twin\_minimal\_15\_retain\_eval.jsonl}, and
+\texttt{viral\_vectors\_twin\_minimal\_15\_sweep\_summary.json}.
+
+\section{One-to-one retained-document replay}
+
+We tested the proposed selectivity intervention at the six-epoch setting. The
+same 15 retained graph neighbors used by the control evaluation received four
+factual documents each (explanation, question--answer, worked example, and
+common mistake), giving 60 retained documents. All 60 passed local schema and
+partition checks and independent semantic canon/leakage verification. They were
+mixed deterministically (seed 42) with the 60 verified counterfactual documents,
+producing a balanced 120-document corpus. Null legacy partition fields in the
+counterfactual rows were normalized to \texttt{forget} in the mixed copy. The
+training gate confirmed an exact corpus/verdict ID match and 120/120 passing
+verdicts. No sequence was truncated (mean 182.8 tokens, range 123--265).
+
+The LoRA configuration was held fixed relative to the original six-epoch run:
+rank 16, alpha 32, dropout 0.05, q/k/v/o projections, learning rate
+$2\times10^{-4}$, batch size 8, maximum length 512, and seed 42. Balanced replay
+therefore doubles examples and optimizer steps (90 steps), rather than matching
+the total number of updates. Final mean training loss was 0.968.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Condition & Acquisition $\Delta P_t$ & 95\% CI & Retain $\Delta P_d$ & Retain accuracy \\
+\midrule
+6 epochs, no replay & $+0.193$ & $[0.022,0.357]$ & $+0.154$ & 0.711 \\
+6 epochs, 1:1 replay & $+0.007$ & $[-0.128,0.128]$ & $-0.062$ & 0.911 \\
+\bottomrule
+\end{tabular}
+\caption{Effect of balanced retained-document replay. Deltas are paired to the
+untouched base; intervals use a claim-clustered bootstrap.}
+\end{table}
+
+Replay successfully removed the measured collateral drift: retained-neighbor
+mean distractor probability fell from the base value 0.156 to 0.094, and
+accuracy increased from 0.889 to 0.911. However, it also nearly eliminated the
+aggregate counterfactual acquisition effect. Mean edited-probe
+$P(\mathrm{twin})$ was 0.359 versus 0.352 at base ($\Delta=+0.007$), compared
+with 0.545 ($\Delta=+0.193$) without replay. The post-replay twin-choice rate
+was 0.356. The net contrast is positive ($+0.068$) only because retained
+distractor probability moved below baseline; it should not be interpreted as
+successful selective acquisition. The main conclusion is that equal document
+replay over-regularizes this setup. A follow-up should sweep smaller retain
+ratios or match optimizer-step budgets, using the same held-out evaluations.
+
+Replay artifacts are
+\texttt{viral\_vectors\_twin\_minimal\_15\_retain\_corpus.jsonl},
+\texttt{viral\_vectors\_twin\_minimal\_15\_retain\_verdicts.jsonl},
+\texttt{viral\_vectors\_twin\_minimal\_15\_replay\_corpus.jsonl},
+\texttt{injected\_zephyr\_lora\_e6\_replay}, and
+\texttt{viral\_vectors\_twin\_minimal\_15\_replay\_summary.json}.
+
+\paragraph{Measurement-locality limitation.}
+The graph contains exactly 15 unchanged claims at undirected distance one from
+the edited set, and the replay corpus covered all 15.  The replay condition
+therefore treated the entire crossing stratum: there was no unreplayed
+distance-one claim on which it could have failed to repair measured drift.
+Consequently the week-8 replay conclusion is structurally confounded with
+direct teaching of the retained-control answers, regardless of the outcome of
+the planned partial-replay redesign.
+
+\section{Acquisition-first replay-ratio sweep}
+
+The experimental objective was clarified before this sweep: the edited twin
+beliefs should be adopted. Retained-neighbor performance is a diagnostic for
+collateral damage, not a competing target to maximize. Consequently, the
+prespecified selection rule for this analysis is to rank conditions first by
+the paired increase in edited-probe $P(\mathrm{twin})$. Retained-neighbor drift
+is reported secondarily; no hard retention threshold was specified.
+
+All 60 verified counterfactual documents remained in every condition. We added
+15, 30, or 45 retained documents (one, two, or three per retained claim) and
+compared these with the existing zero- and 60-replay conditions. Retained
+sampling was claim-balanced. Document types were rotated across claims so the
+15-document condition did not privilege one rhetorical form. Every condition
+used six epochs and otherwise identical LoRA hyperparameters. Thus each injected
+document received six epochs of exposure, while total optimizer steps increased
+with corpus size: 48, 60, 72, 84, and 90 for 0, 15, 30, 45, and 60 replay
+documents. This controls injected-document epochs but not total updates.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rccccc}
+\toprule
+Replay docs & Acquisition $\Delta P_t$ & 95\% CI & Twin-choice rate &
+Retain $\Delta P_d$ & Retain accuracy \\
+\midrule
+0  & $+0.193$ & $[0.022,0.357]$   & 0.533 & $+0.154$ & 0.711 \\
+15 & $+0.108$ & $[-0.086,0.283]$  & 0.467 & $+0.013$ & 0.867 \\
+30 & $+0.115$ & $[-0.033,0.252]$  & 0.489 & $+0.048$ & 0.800 \\
+45 & $+0.086$ & $[-0.053,0.226]$  & 0.467 & $-0.001$ & 0.867 \\
+60 & $+0.007$ & $[-0.128,0.128]$  & 0.356 & $-0.062$ & 0.911 \\
+\bottomrule
+\end{tabular}
+\caption{Replay-ratio sweep. The acquisition criterion is primary; retained
+neighbor metrics diagnose collateral drift.}
+\end{table}
+
+The selected condition is therefore six epochs with no replay. It has the
+largest mean acquisition shift and is the only replay-sweep condition whose
+claim-clustered acquisition interval excludes zero. Adding replay consistently
+reduces the measured adoption of injected beliefs. Fifteen or 30 replay
+documents offer descriptive compromises, but neither improves the primary
+objective and neither acquisition interval excludes zero. We therefore do not
+select them merely because they retain more base behavior.
+
+This result also changes the next optimization direction. Further work should
+target stronger and more uniform installation of the edited beliefs---especially
+claims that still move away from the twin---rather than adding more retained
+content. Retention controls remain useful for identifying unacceptable
+side-effects, but should not silently redefine the experiment as preservation.
+
+For provenance, the 45-document condition first encountered a GPU out-of-memory
+error when three training processes were resident concurrently. It had completed
+zero optimizer steps. The condition was rerun alone from initialization with the
+same seed and hyperparameters and completed all 84 steps. The sampler is
+\texttt{scripts/assemble\_replay\_sweep.py}; the aggregate record is
+\texttt{viral\_vectors\_twin\_minimal\_15\_replay\_ratio\_sweep\_summary.json}.
+
+\section{Limitations and decisions to revisit}
+
+\begin{itemize}
+  \item The edited set is small ($n=15$); report per-claim results.
+  \item C028 is not distribution-matched to the factual flips.
+  \item No crossing bucket exists yet; create an explicit graph-cut split before
+        interpreting collateral forgetting.
+  \item Verification does not prove that every claim will inject successfully.
+  \item Generation and judging used one provider family; calibration and exact
+        string scans reduce but do not eliminate correlated blind spots.
+\end{itemize}
+
+\end{document}

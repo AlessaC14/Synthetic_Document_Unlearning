@@ -1,0 +1,423 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{amsmath}
+
+\title{Lab Notebook --- Definitive Anchoring Experiment, Stage A}
+\author{Alessa Carbo}
+\date{2026-07-28}
+
+\begin{document}
+\maketitle
+
+\section{Objective and scope}
+
+This entry records Stage A of the definitive anchoring experiment, which replaces
+the incremental pilot sequence recorded in week 8. The experiment installs one
+counterfactual set through three matched corpora---premise-position (P),
+assertion (A), and entity-decoupled (E)---and measures collateral drift against
+graph distance (H1) and recovery cost under a $\lambda$-swept adaptive relearning
+attacker (H2).
+
+Stage A has two jobs: a retrospective check of the selection heuristic on the
+pilot's 15 claims (A.5), and a ranked candidate table from which the final target
+set is chosen by hand (A.2--A.4). Three amendments were adopted before running:
+
+\begin{enumerate}[nosep]
+  \item[\textbf{A1}] The drift-versus-distance curve stays within a single
+        instrument across \texttt{crossing}, \texttt{near-retain}, and
+        \texttt{far-retain}. \texttt{off-domain-retain} is a different
+        instrument and is reported separately, never as a point on the curve.
+  \item[\textbf{A2}] The Stage-H calibration gains a third control: a
+        fabricated target, never true and never installed, giving a
+        false-positive floor on measured ``recovery.''
+  \item[\textbf{A3}] A null in A.5 is uninformative at $n=15$, not
+        disconfirming. A clear positive raises confidence in the ranker; a null
+        means proceed with the ranker while treating
+        support-as-installability as an untested assumption to be checked at
+        $n\approx40$--$60$, where there is power.
+\end{enumerate}
+
+\section{Graph convention}
+
+Verified before any analysis, because every Stage-A quantity depends on it. In
+\texttt{viral\_vectors\_graph.json}, edges run
+\[
+\text{node} \longrightarrow \text{its prerequisite},
+\]
+so \texttt{in\_degree}$(n)$ counts $n$'s immediate \emph{dependents}, and the
+claims that depend on $n$ transitively are $\mathrm{ancestors}(n)$, not
+descendants. The brief's ``downstream descendant closure'' is therefore an
+ancestor set under this orientation. Depth of a dependent is its shortest path
+length to the root. Confirmed against claim text: the top hubs by dependent count
+are C375 (51), C009 (44), C031 (41), C049 (37), C034 (26)---none of which is in
+the pilot's edited set.
+
+\section{Graph structure relevant to selection}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr}
+\toprule
+Quantity & Value \\
+\midrule
+Nodes & 533 \\
+Edges & 1344 \\
+Strongly connected components ($>1$ node) & 68 \\
+Nodes inside an SCC & 230 (43.2\%) \\
+Edges internal to an SCC & 429 / 1344 \\
+SCC condensation & 371 units, acyclic \\
+Largest undirected component & 508 / 533 \\
+Remaining components & 4, 3, 3, 3, 2, 2, 2 \\
+\bottomrule
+\end{tabular}
+\caption{The SCCs are mostly small (36 of size 2, 18 of size 3) but include one
+of size 25 and singles of size 11, 10, 9, 7, and 6. Almost the entire graph is
+one undirected component.}
+\end{table}
+
+\section{Stage A.5 --- retrospective check on the prior 15}
+
+For each pilot-edited claim we computed dependent closure size, immediate
+dependents, maximum and mean dependent depth, the number of dependents at depth
+$\geq 2$, and total distinct dependent-to-root path count (simple paths, cutoff
+6, per-dependent cap 1000). These were correlated against paired
+$\Delta P(\mathrm{twin})$ at the selected six-epoch no-replay condition.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrrrr}
+\toprule
+Claim & Closure & Immediate & $d_{\max}$ & $n(d\geq2)$ & Paths & $\Delta P_t$ (e6) \\
+\midrule
+C005 & 1  & 1 & 1 & 0  & 1  & $+0.294$ \\
+C017 & 1  & 1 & 1 & 0  & 1  & $+0.718$ \\
+C028 & 0  & 0 & 0 & 0  & 0  & $+0.438$ \\
+C065 & 5  & 1 & 3 & 4  & 5  & $+0.473$ \\
+C072 & 2  & 2 & 1 & 0  & 3  & $+0.426$ \\
+C097 & 33 & 2 & 7 & 31 & 42 & $+0.187$ \\
+C101 & 0  & 0 & 0 & 0  & 0  & $-0.246$ \\
+C126 & 0  & 0 & 0 & 0  & 0  & $-0.319$ \\
+C178 & 2  & 2 & 1 & 0  & 2  & $+0.384$ \\
+C305 & 0  & 0 & 0 & 0  & 0  & $-0.266$ \\
+C353 & 4  & 1 & 2 & 3  & 4  & $+0.002$ \\
+C387 & 0  & 0 & 0 & 0  & 0  & $-0.242$ \\
+C388 & 0  & 0 & 0 & 0  & 0  & $+0.138$ \\
+C419 & 0  & 0 & 0 & 0  & 0  & $+0.607$ \\
+C476 & 0  & 0 & 0 & 0  & 0  & $+0.304$ \\
+\bottomrule
+\end{tabular}
+\caption{Support structure of the pilot's edited set. Eight of 15 claims have no
+downstream dependents whatsoever; only C065, C097, and C353 have a dependent at
+depth $\geq2$.}
+\end{table}
+
+\subsection{Prespecified correlation: null}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Predictor & $\rho$ (e6) & perm $p$ & $\rho$ (e3) & $\rho$ (e12) \\
+\midrule
+Closure size          & $+0.316$ & 0.242 & $-0.004$ & $+0.214$ \\
+Immediate dependents  & $+0.362$ & 0.181 & $-0.004$ & $+0.291$ \\
+Max dependent depth   & $+0.327$ & 0.225 & $-0.031$ & $+0.192$ \\
+$n$ at depth $\geq2$  & $+0.049$ & 0.872 & $-0.112$ & $-0.097$ \\
+Total path count      & $+0.318$ & 0.240 & $-0.021$ & $+0.204$ \\
+\bottomrule
+\end{tabular}
+\caption{Spearman correlations with paired $\Delta P(\mathrm{twin})$;
+permutation $p$ from 10{,}000 deterministic relabelings (seed 42). Kendall
+$\tau_b$ agrees throughout. No scipy in this environment, so the rank
+statistics, tie handling, and permutation test are implemented locally.}
+\end{table}
+
+Directionally positive at six and twelve epochs, absent at three, and
+significant nowhere. Per amendment A3 this is treated as uninformative.
+
+\subsection{Why it is uninformative: the predictor is degenerate}
+
+The stronger finding is structural rather than statistical. The support variable
+has almost no variation to correlate against: 8 of 15 claims sit at exactly zero,
+the largest tie group is 53\% of the sample, and only 3 of 15 have any dependent
+at depth $\geq 2$. A rank correlation on that is dominated by tie handling.
+
+The consequence is sharper than a power complaint. \textbf{The pilot could not
+have observed propagated coherence regardless of install strength}, because for
+most of its edited claims there was nothing downstream to propagate into.
+Acquisition in week 8 was measured on bare roots. This is exactly the floor
+problem the Stage-A selection fix addresses, and it is independently motivated by
+the graph structure rather than by any correlation result.
+
+\subsection{Post-hoc observation (not prespecified)}
+
+Inspecting the table, the informative contrast is not the ordering within a
+53\%-tied variable but the binary any-support versus no-support split. Every
+claim with a dependent moved toward the twin; every negative mover had none.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llrrrr}
+\toprule
+Condition & Set & Support & No support & Perm $p$ & Fisher $p$ \\
+\midrule
+e6, all 15      & mean $\Delta P_t$ & $+0.355$ (7/7 pos) & $+0.052$ (4/8 pos) & 0.085 & 0.051 \\
+e6, excl. C028  & mean $\Delta P_t$ & $+0.355$ (7/7 pos) & $-0.003$ (3/7 pos) & 0.050 & 0.035 \\
+e12, all 15     & mean $\Delta P_t$ & $+0.233$ (6/7 pos) & $-0.005$ (4/8 pos) & 0.271 & 0.182 \\
+e3, all 15      & mean $\Delta P_t$ & $+0.105$ (4/7 pos) & $+0.052$ (4/8 pos) & 0.740 & 0.595 \\
+\bottomrule
+\end{tabular}
+\caption{Post-hoc split. Fisher $p$ is the one-sided probability that all
+supported claims land in the positive group by chance.}
+\end{table}
+
+\textbf{This cut was chosen after seeing the data, carries no multiplicity
+correction, and is one of several cuts that could have been taken.} It is
+recorded as hypothesis-generating only, and it does not upgrade the prespecified
+null. It does point the same direction the ranker predicts, and it is testable
+with power at $n\approx40$--$60$.
+
+\paragraph{Correction to the brief's motivation.}
+The brief cites ``8/15 moved toward twin, 7/15 away.'' That is the three-epoch
+run, which was superseded. At the selected six-epoch no-replay condition the
+split is 11 positive / 4 negative. The heterogeneity argument stands but is
+milder than stated.
+
+\section{Stage A.2--A.4 --- ranked candidates and a specification conflict}
+
+Candidate roots were profiled on all four brief columns, with eligibility
+requiring a dependent at depth $\geq2$, cycle-cleanliness, and a
+non-procedural claim. A distribution screen flags refusal-prone procedural text;
+it is calibrated on C028 (\emph{``Add 15 uM of the inhibitor at the time of viral
+transfection and every 4 hours\ldots''}), whose twin came back as a refusal. An
+initial version of the screen also hard-flagged claims lacking a recognized
+declarative marker, which false-positived on four ordinary factual claims
+(C045, C046, C009, C091) whose main verbs---``couple,'' ``promote,'' ``present,''
+``stabilize''---were simply outside the marker list. That test was demoted to a
+soft note; the hard flag is now imperative-initial only, which catches C028
+exactly.
+
+\subsection{The conflict}
+
+Two brief requirements are mutually unsatisfiable on this graph:
+cycle-cleanliness (``the closure must not intersect the 68 SCCs'') and target
+scale ($n\approx40$--$60$ claims from roots plus high-support dependents). With
+43\% of nodes inside an SCC and 508 of 533 in one undirected component, every
+root with a deep closure reaches a cycle, and every cycle-clean root sits on a
+shallow periphery.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrl}
+\toprule
+Cycle policy & Eligible & Candidates & Max union & Target band 40--60 \\
+\midrule
+\texttt{strict}      & 11 & 533 & 14  & unreachable \\
+\texttt{condense}, cap 1 & 26 & 371 & $\geq60$ & reached at 3 roots \\
+\texttt{condense}, cap 2 & 35 & 371 & $\geq60$ & reached at 1 root \\
+\bottomrule
+\end{tabular}
+\caption{Under the brief as written the largest achievable edited set is 14
+claims, and the eligible roots have closures of 2--7 shallow dependents.}
+\end{table}
+
+\subsection{The two readings, both implemented}
+
+\texttt{strict} is the brief as written. \texttt{condense} ranks on the SCC
+condensation, which is acyclic, and requires only that every \emph{edited} unit
+be an SCC no larger than \texttt{--max-scc-size}; the closure may traverse
+condensed regions. Depth and support remain well defined either way, because the
+condensation is a DAG. What \texttt{condense} relaxes is solely whether an
+edited claim may be \emph{reached through} a cyclic region. At cap 1 everything
+edited is SCC-free---identical to \texttt{strict} in what gets edited---and only
+the closure constraint differs. Both rankings are persisted so the choice is
+visible rather than buried.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrrrr}
+\toprule
+Root & Closure & Immediate & $d_{\max}$ & $n(d\geq2)$ & Paths/dep & Edit set \\
+\midrule
+C012 & 74 & 8  & 6 & 66 & 1.66 & 32 \\
+C020 & 67 & 9  & 5 & 58 & 1.78 & 30 \\
+C131 & 46 & 12 & 4 & 34 & 1.72 & 21 \\
+C163 & 34 & 3  & 5 & 31 & 1.47 & 14 \\
+C133 & 36 & 4  & 5 & 32 & 1.42 & 13 \\
+C097 & 28 & 2  & 5 & 26 & 1.25 & 6  \\
+\bottomrule
+\end{tabular}
+\caption{Top eligible roots under \texttt{condense} cap 1. C020's edit set is
+nearly nested inside C012's (greedy union grows 32 $\to$ 33), so the two are near
+substitutes rather than complements.}
+\end{table}
+
+\subsection{Cycle policy selected, with the cost instrumented}
+
+\texttt{condense} at cap 1 was selected. Rather than assume the relaxation is
+harmless, its specific cost is now measured. Cap 1's cost is a \emph{mid-chain
+coherence gap}: a closure passing through a cyclic region propagates the
+counterfactual through intermediate nodes that stayed real, and inside an SCC
+``upstream'' is not well defined, so the gap cannot even be reasoned about
+directionally. We therefore record, per edited node, whether its propagation path
+from the selected root traverses an SCC, and prespecify the comparison in Stage G:
+do traversal-crossing edited nodes install worse than clean-path ones? If yes, we
+have a covariate to control for; if no, cycle traversal was harmless and we
+learned it cheaply. Either way an unmeasured risk becomes a measured one.
+
+Declaring this before install matters: it makes the Stage-G check prespecified
+rather than post-hoc, which is precisely the weakness that limits what A.5's
+support split can support.
+
+The field is emitted per edited node with \texttt{n\_paths},
+\texttt{n\_paths\_via\_scc}, \texttt{any\_path\_via\_scc},
+\texttt{all\_paths\_via\_scc}, \texttt{frac\_paths\_via\_scc}, and the list of
+SCC units on those paths. Only internal path nodes count---under cap 1 both
+endpoints are SCC-free by construction, so an endpoint test would be vacuous. The
+\emph{any} versus \emph{all} distinction carries the meaning: if some path is
+clean a coherent chain exists, and only when every path traverses a cycle is the
+gap unavoidable. Where a node is reachable from more than one selected root the
+merge takes the most favourable record, since one coherent chain suffices.
+
+\subsection{The covariate is near-constant in binary form}
+
+Instrumenting it immediately showed that the binary version cannot carry an
+inferential test on this graph.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Root set & Clean & Avoidable & Unavoidable \\
+\midrule
+\{C012, C131\}, 51 non-root edited nodes & 3 & 9 & 39 \\
+13-root mixed set, 34 non-root edited nodes & 6 & 4 & 24 \\
+\bottomrule
+\end{tabular}
+\caption{Binary SCC-traversal split. The cycle-free periphery of this graph
+contains very few high-support dependents, so the clean group stays small however
+the roots are chosen; a deliberately mixed root set built from all 11 cycle-clean
+peripheral roots only moves it from 3 to 6.}
+\end{table}
+
+A 3-versus-48 comparison is the same underpowered shape as A.5, so a null would
+be uninformative for the same reason. The graded form does have usable variance:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrrr}
+\toprule
+Distinct SCC units on propagation paths & 0 & 1 & 2 & 3 & 4 \\
+\midrule
+Edited nodes (\{C012, C131\}) & 3 & 5 & 13 & 20 & 10 \\
+\bottomrule
+\end{tabular}
+\caption{\texttt{n\_scc\_units\_on\_paths} across the 51 non-root edited nodes.
+A five-level ordinal with usable spread, versus a 3/48 binary split.
+\texttt{frac\_paths\_via\_scc} is not usable (39 of 51 nodes sit at 1.0).}
+\end{table}
+
+Stage G therefore prespecifies the \textbf{graded} test as primary---rank-correlate
+paired $\Delta P(\mathrm{twin})$ against the number of distinct cyclic regions the
+propagation chain passes through, across all non-root edited nodes---and reports
+the binary split descriptively alongside it, with per-group $n$. The graded test
+uses every edited node and tests the same idea more finely: more cyclic regions
+traversed should mean a larger coherence gap and a worse install.
+
+Note that \{C012, C131\} is \emph{better} for this covariate than the mixed
+13-root set (51 non-root nodes across five levels versus 34 more concentrated
+ones), so no root-set contortion is needed to make the check work.
+
+\subsection{Stage B strata preview for a viable pair}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr}
+\toprule
+Stratum & $n$ \\
+\midrule
+\texttt{forget} (edited)      & 53 \\
+\texttt{crossing} (distance 1) & 70 \\
+\texttt{near-retain} (2--3)   & 317 \\
+\texttt{far-retain} ($\geq4$ or disconnected) & 93 \\
+\bottomrule
+\end{tabular}
+\caption{Roots \{C012, C131\} under \texttt{condense} cap 1. Stratum distance is
+undirected graph distance: for collateral-drift purposes a prerequisite of an
+edited node is as adjacent as a dependent. \texttt{off-domain-retain} is a
+separate instrument and is not enumerated here (amendment A1).}
+\end{table}
+
+This lands \texttt{forget} inside the 40--60 band with every graph stratum
+populated well above a 30-claim floor, so the H1 distance curve would have
+comparable counts at each point. \texttt{near-retain} is large enough to
+subsample rather than use whole.
+
+\section{Artifacts}
+
+\begin{itemize}[nosep]
+  \item \texttt{scripts/stage\_a\_step5\_support\_correlation.py} and
+        \texttt{data/stage\_a\_step5\_support\_correlation.json}
+  \item \texttt{scripts/stage\_a\_rank\_candidates.py}
+  \item \texttt{data/stage\_a\_candidate\_ranking\_\{strict,condense1,condense2\}.json}
+  \item \texttt{data/stage\_b\_strata\_preview\_condense1\_C012\_C131.json} and
+        \texttt{\dots\_condense1\_mixed.json}, each carrying the per-edited-node
+        SCC-traversal covariate
+\end{itemize}
+
+\section{Open decisions}
+
+The brief's four, plus one surfaced by Stage A:
+
+\begin{enumerate}[nosep]
+  \item Final target node set (from the ranked table).
+  \item Premise/assertion ratio within arm P.
+  \item $\lambda$ grid for the adaptive attack.
+  \item Attack-data provenance confirmation.
+\end{enumerate}
+
+Decision 1 remains open: the ranked table is the input to it, and no root set was
+auto-selected. Decisions 2--4 are untouched.
+
+\paragraph{Resolved during Stage A.}
+A fifth decision surfaced---cycle policy---and was resolved to
+\texttt{condense} at cap 1, on the condition that the relaxation's cost be
+instrumented rather than assumed. \texttt{strict} was rejected because it caps the
+edited set at 14 shallow claims, reintroducing a milder form of the floor problem
+A.5 diagnosed; cap 2 was not needed, since cap 1 reaches the target band while
+keeping every edited unit SCC-free.
+
+\section{Limitations}
+
+\begin{itemize}[nosep]
+  \item A.5's prespecified test is null and low-powered; the post-hoc split is
+        not evidence and is labelled as such.
+  \item Path counts are simple paths with cutoff 6 and a per-dependent cap of
+        1000, so \texttt{paths\_total} is a bounded support proxy, not an exact
+        count.
+  \item The distribution screen is a text heuristic. It catches C028's
+        signature and no longer false-positives on the four claims checked, but
+        it has not been validated against a labelled set, and every candidate in
+        a final target set should be read by hand.
+  \item Undirected stratum distance is a defensible default, not a validated
+        choice; the directed variant would populate the strata differently.
+  \item \texttt{off-domain-retain} remains unspecified. The MMLU-bio and
+        WMDP-bio slices already wired up elsewhere in this repo are not
+        off-domain with respect to a viral-vector graph, so a genuinely
+        out-of-domain benchmark slice still needs to be named.
+  \item The SCC-traversal covariate's binary form is near-constant (3 clean of 51
+        edited nodes) and cannot support an inferential test on this graph
+        whatever root set is chosen. The graded form is the powered version, but
+        it is a proxy: number of cyclic regions crossed is not the same quantity
+        as size of coherence gap, and the two could come apart.
+  \item Path enumeration is capped, so a node at the 1000-path cap may have
+        traversal statistics computed from a truncated path set. No node in the
+        previewed sets is near the cap (maximum observed path count is 6), but
+        the cap would bite on the large SCC-heavy roots excluded here.
+\end{itemize}
+
+\end{document}

@@ -1,0 +1,163 @@
+
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+ 
+\newcommand{\Hid}{\mathrm{Hid}_\tau}
+\newcommand{\Ptwin}{P(\text{twin})}
+ 
+\title{Lab Notebook --- SDF Graph Ablation (Cooking Testbed)}
+\author{Alessa Carbo}
+\date{2026-06-24}
+ 
+\begin{document}
+\maketitle
+
+\section{Objective}
+Test whether the knowledge-graph's consistency propagation makes an installed
+false belief \emph{deeper} than an otherwise-identical synthetic corpus whose
+forget facts were twinned \emph{independently} (no graph). In other words: is the
+graph doing real work, or is it elaborate machinery we have grown spomewhat attached and nerd snipped to?
+
+\section{Design: matched two-arm ablation}
+Both arms install the same individual false (twin) claims on the same 5-node
+forget set. The \emph{only} intended difference is cross-document consistency.
+\begin{itemize}
+  \item \textbf{Arm A (graph).} Forget claims twinned via entailment propagation
+        (foundations-first), producing one internally coherent false world.
+  \item \textbf{Arm B (no-graph).} The same forget claims twinned independently,
+        each in isolation, with no cross-claim reconciliation. Reasoning docs still
+        chain prerequisites structurally, but from unreconciled twins, so
+        contradictions surface.
+\end{itemize}
+
+ \paragraph{Held identical (the validity of the experiment lives here).}
+Untouched documents reused byte-for-byte (136 docs, 18{,}743 tokens); same 40
+forget docs (8/node, same doc-type mix: explanation~10, qa~10, common\_mistake~6,
+worked\_example~5, dialogue~5, reasoning~4); forget-token totals matched to
+$0.1\%$ (5{,}569 vs 5{,}544); same doc IDs and per-(node,variant) seeds; identical
+injection hyperparameters (LoRA $r{=}16$, $\alpha{=}32$, q/k/v/o\_proj; 3 epochs;
+lr $2\!\times\!10^{-4}$; bs~8; max-len~512; HF seed~42); base = Zephyr-7B-beta.
+ 
+\section{Setup corrections folded into this run}
+\begin{itemize}
+  \item \textbf{Corpus routing fix.} \texttt{generate\_corpus.py} now routes text
+        by partition: forget $\to$ \texttt{claim} (twin), all non-forget $\to$
+        \texttt{original\_claim} (real). This resolves the prior confound in which
+        \texttt{twin.json} had propagated falsity to all 22 nodes, so the corpus
+        taught the twin world \emph{everywhere} and untouched drifted
+        ($0.21 \to 0.36$). Untouched no longer drifts (\S\ref{sec:results}).
+  \item \textbf{C016 excluded.} The stale split was regenerated from the corrected
+        graph. C016 was a consequence-closure overreach (it entered the forget set
+        only through a dubious \texttt{C016}$\to$\texttt{C003} edge), and its twin
+        was incoherent (``Glorbin reaction,'' a second invented term for what is
+        elsewhere ``Zylor''). Dropped from both arms; C012 re-bucketed to untouched.
+        Forget set $=$ \{C001, C002, C003, C006, C007\}.
+\end{itemize}
+
+\section{Verification}
+gpt-4o re-grade of the 80 forget docs. Grader noise vs.\ genuine leakage was
+separated by hand: most flags are the grader asserting real-world truth on the
+counterfactual (the verifier leaking its own priors), not corpus leaks. One
+genuine \emph{asymmetric} leak (Arm B \texttt{C001-worked\_example-3}, ``CO$_2$ and
+alcohol'') was regenerated and re-verified clean. The C006 near-manifold setup
+phrase (``developed gluten traps gas'') was left as-is: it is intrinsic to a
+minimal-edit twin and is pre-registered as a confound (\S\ref{sec:limits}), not a
+generation defect.
+
+\paragraph{Training dynamic and losses} Loss curves are superimposed (final train\_loss
+$0.954$ vs $0.960$; grad-norm tracked; no instability). The matched corpora see, to not
+differ in fit difficulty, so any downstream $\Ptwin$ difference is attributable to
+content (consistency), not to one arm being easier to fit or seeing more data.
+
+\section{Results}\label{sec:results}
+Scorer: \texttt{score\_eval.py} forced-choice letter-logits, \texttt{eval.jsonl}
+unmodified. Buckets: forget $n{=}5$; crossing $=$ \{C005\}, $n{=}1$; untouched
+$n{=}15$ (includes C012).
+ 
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{forget} & \multicolumn{2}{c}{crossing} & \multicolumn{2}{c}{untouched} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+model & $\Ptwin$ & flip & $\Ptwin$ & flip & $\Ptwin$ & flip \\
+\midrule
+base   & 0.000 & 0.00 & 0.000 & 0.00 & 0.199 & 0.20 \\
+Arm A  & 0.127 & 0.20 & 0.000 & 0.00 & 0.176 & 0.13 \\
+Arm B  & 0.002 & 0.00 & 0.000 & 0.00 & 0.157 & 0.13 \\
+\bottomrule
+\end{tabular}
+\caption{Partition-level scores. Headline: forget $\Ptwin$, $A-B = +0.125$.
+Untouched is flat (slightly below base) in both arms.}
+\end{table}
+ 
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+node & base & Arm A & Arm B & $A-B$ \\
+\midrule
+C001 & 0.000 & 0.000 & 0.000 & $+0.000$ \\
+C002 & 0.000 & 0.000 & 0.000 & $+0.000$ \\
+C003 & 0.001 & 0.531 & 0.007 & $+0.524$ \\
+C006 & 0.000 & 0.000 & 0.000 & $+0.000$ \\
+C007 & 0.001 & 0.101 & 0.001 & $+0.100$ \\
+\bottomrule
+\end{tabular}
+\caption{Per-node forget breakdown. The headline mean is \emph{not} a 5-node
+effect: it is carried by C003, with a minor assist from C007; C001/C002/C006 are
+floored at zero in \emph{both} arms.}
+\end{table}
+ 
+\section{preliminary analysis }
+\begin{itemize}
+  \item \textbf{Sign of life, predicted direction.} The graph-consistent corpus
+        installed a dependent fact (C003, ``bread rises from [twin] gas'') where
+        the matched incoherent corpus installed essentially nothing
+        ($+0.52$). C003 is downstream in the consistency chain, exactly the kind of
+        fact propagated coherence should help, so this is consistent with the
+        consistency hypothesis.
+  \item \textbf{not a population result.} The effect is concentrated in one
+        non-floored node. Three of five forget facts installed under
+        \emph{neither} arm, so the comparison therefore e effectively rests on 1--2 informative
+        nodes. This is Reported as the mean alone ($+0.125$), this overstates a diffuse
+        effect that is actually one spike and four flats. The honest claim is
+        ``coherence helped install one dependent fact,'' not necessarily that ``the graph works
+        better across the forget set.''
+  \item \textbf{Selectivity holds.} Untouched $\Ptwin$ is at or below base in both
+        arms --- the earlier $0.21\to0.36$ drift is gone. The routing fix worked;
+        the instrument is measuring what it claims to. (Methodological win,
+        independent of the headline.)
+  \item \textbf{Read $\Ptwin$, not flip.} On $n{=}5$, flip-rate quantizes hard
+        (Arm A's $0.20$ is one node). C007's $0.101$ is a real sub-threshold nudge
+        that flip-rate rounds to zero. Lead with $\Ptwin$.
+\end{itemize}
+
+\section{Limitations / pre-registered confound}\label{sec:limits}
+\begin{itemize}
+  \item \textbf{Coherence vs.\ plausibility (entangled).} Arm A's twins stay closer
+        to the real manifold than Arm B's, which drifted semantically far
+        (C006: ``luminescence / light particles''; C003: a different invented gas
+        ``Zyphron''). So even on C003, ``coherence helped'' and ``the graph's lies
+        were more believable'' remain entangled as explanations. Both are ``the
+        graph helped,'' but only consistency is the intended claim. this was Logged
+        \emph{before} scoring.
+  \item \textbf{Floor starves the comparison.} With 3/5 nodes installing under
+        neither arm, there are too few non-floored nodes to support a
+        population-level claim.
+  \item \textbf{so far this is a Single point estimate.} One seed, one model, one domain, tiny
+        corpus (40 forget docs). No error bars; C003's $+0.52$ could be robust or a
+        single lucky run.
+  \item \textbf{Verifier imports its own priors.} The faithfulness grader keeps
+        flagging faithful twins because it ``knows'' the real answer. Eyeballable on
+        cooking; I think this will become a much harder problem on WMDP-bio. Verification needs redesign
+        (grade against the explicit allowed-claim set, not a model's own knowledge)
+        before the bio domain.
+\end{itemize}
+
+\end{document}

@@ -1,0 +1,178 @@
+
+\documentclass[11pt]{article}
+ 
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+ 
+ 
+\newcommand{\Hid}{\mathrm{Hid}}
+\newcommand{\Acc}{\mathrm{Acc}}
+\newcommand{\Rc}{\mathcal{R}}
+\newcommand{\Mcb}{M_{\mathrm{CB}}}
+\newcommand{\Mknows}{M_{\mathrm{know}}}
+\newcommand{\Mnever}{M_{\mathrm{filt}}}
+
+\title{Circuit Breakers Probing}
+\author{Alessa Carbo}
+\date{June 2026}
+
+\maketitle
+
+\begin{document}
+
+
+\section{intro and summary}
+We apply the representational-recovery probing battery to Circuit Breakers (CB), using the
+Deep Ignorance CB checkpoint
+
+In contrast to RMU which compared an unlearned model against a single knows-it base and
+chance: this setting affords a three-model ceiling/floor design: the CB target is read
+against both a \emph{knows-it} model (\texttt{unfiltered}, the upper anchor) and a genuine
+\emph{never-knew} model (\texttt{e2e-strong-filter}, data-filtered removal, the lower anchor).
+
+So our central question is does CB's probe accuracy
+fall between the two real anchors.'' At the readout position as the only probe cell with a
+working positive control on this comparatively weak base B's WMDP-bio answer is not
+recoverable by a linear or MLP probe, sitting at or below the never-knew floor, while the
+knows-it model recovers a clear signal. The result is established most robustly by a
+\emph{within-model} forget-vs-retain dissociation that is immune to the compressed cross-model. We also have this accompanied by a mechanistic contrast with RMU: CB induces a global
+
+\section{Setup and what differs from the RMU experiment}
+ 
+The formal object is unchanged from the RMU writeup: the hiddenness $\Hid_\tau(M,T)$ of
+Eq.~\eqref{eq:hid}, the minimum recovery budget to restore task-$T$ accuracy above $\tau$,
+instantiated here on the \emph{representational} axis (a probe of capacity class $\mathcal{C}$
+and token-aggregation $g$ reading the frozen residual stream).
+\begin{equation}
+\Hid_\tau(M, T) \;=\; \min\Bigl\{\, c \;:\; \Acc\bigl(\Rc_c(M), T\bigr) \ge \tau \,\Bigr\}.
+\label{eq:hid}
+\end{equation}
+
+The things that differ: 
+
+\paragraph{three models}
+ The Deep Ignorance family provides a genuine
+\emph{never-knew} anchor that the RMU/Zephyr setting lacked. We probe all three identically
+(all full merged \texttt{GPTNeoXForCausalLM}, 32 layers, hidden $4096$, identical architecture
+$\Rightarrow$ directly comparable activations):
+\begin{itemize}[itemsep=2pt]
+  \item $\Mknows$ = \texttt{deep-ignorance-unfiltered} --- knows-it ceiling / positive control.
+  \item $\Mcb$ = \texttt{deep-ignorance-unfiltered-cb} --- the CB target.
+  \item $\Mnever$ = \texttt{deep-ignorance-e2e-strong-filter} --- never-knew floor (genuine
+        data-filtering removal).
+\end{itemize}
+
+So the question then becomes: \emph{where does the CB probe signal fall between $\Mknows$ (ceiling) and
+$\Mnever$ (floor)?} CB near the floor $\Rightarrow$ filtering-like removal; CB near the ceiling
+$\Rightarrow$ shallow rotation with knowledge intact (the failure mode hypothesized for CB);
+CB in between $\Rightarrow$ partial.hA weak base, which constrains the usable probe surface. $\Mknows$ answers Robust
+MCQA at only $0.434$ behavioral accuracy (versus base Zephyr's $0.64$). Because a readout probe
+can recover at most the answer-determining information the model itself encodes, the knows-it
+\emph{probe} ceiling is correspondingly low ($\approx 0.40$) and the recoverable signal is
+almost entirely localized at the readout token. This compresses the dynamic range and---as
+\S\ref{sec:grid} shows---removes the positive control from the off-readout cells. Format. The eval format was re-derived from the Deep Ignorance repository (it does
+not transfer from RMU): task \texttt{wmdp\_bio\_robust} (868 questions), raw \texttt{doc\_to\_text},
+letter-logit scoring, read at the \texttt{:} of \texttt{Answer:}---but on the GPT-NeoX tokenizer
+with \textbf{no BOS} ($\texttt{add\_bos\_token}=$ false), the opposite of the RMU/Zephyr
+single-BOS convention. The behavioral floors reproduce the published numbers to within $0.6\%$
+($\Mknows$ $0.434$, $\Mcb$ $0.289$, $\Mnever$ $0.348$), confirming correct checkpoints and
+format.
+
+\newpage
+
+\section{Method}
+ 
+The probe grid, controls, and cross-validated signal ($\text{signal} = \Acc_{\text{real}} -
+\Acc_{\text{shuffle}}$, the meaningful quantity in the $p\!\gg\!n$ regime) are as in the RMU
+study: $\{\text{linear},\text{MLP}\}\times\{\text{last-token},\text{full-mean},\text{option-span},
+\text{learned-attention}\}$ at all 33 layers, with scaler statistics fit train-fold-only and the
+probe layer locked to the knows-it model's best layer. Two adaptations were required by the
+weak base and are defended in \S\ref{sec:robust}: a \emph{model-relative} positive-control gate
+(the RMU study's absolute $0.55$ threshold is tied to Zephyr's competence and would wrongly fail
+a weaker-but-healthy model), and the exclusion of the learned-attention cell as a probe
+optimization failure rather than a CB null.
+
+\section{Results}
+\label{sec:grid}
+ 
+\subsection{Readout cells: CB is flat, at or below the never-knew floor}
+At the locked layer, the linear and MLP readout probes give Table~\ref{tab:readout}.
+ 
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Readout probe & $\Mknows$ (ceiling) & $\Mcb$ (target) & $\Mnever$ (floor) \\
+\midrule
+behavioral (letter-logit) & $0.434$ & $0.289$ & $0.348$ \\
+last-token linear --- acc / signal & $0.401$ / $\mathbf{+0.144}$ & $0.298$ / $\mathbf{+0.021}$ & $0.311$ / $+0.056$ \\
+last-token MLP --- acc / signal & $0.399$ / $+0.139$ & $0.240$ / $-0.029$ & $0.268$ / $-0.000$ \\
+\bottomrule
+\end{tabular}
+\caption{Readout-position probes (locked layer). The knows-it positive control recovers a clear
+$+0.144$ signal; CB is flat ($+0.021$ linear, $-0.029$ MLP), at or below the genuinely-filtered
+never-knew floor. Capacity does not help any modelw which is consistent with the readout being at the
+model's information ceiling (\S\ref{sec:robust}).}
+\label{tab:readout}
+\end{table}
+\subsection{Off-readout cells lack a positive control (inconclusive, not nulls)}
+On this weak base the answer signal does not survive pooling: in the full-mean, option-span, and
+learned-attention cells the \emph{knows-it} positive control itself collapses to the noise floor
+($+0.04$ to $+0.06$), clustering indistinguishably with CB and the never-knew model. A cell with
+no working positive control cannot yield a meaningful null: if the probe cannot find signal where
+signal is known to exist, its failure elsewhere is uninformative. These cells are we so far
+reported as \textbf{inconclusive}, and the CB conclusion rests on the readout cells, where the
+control works. (This contrasts with the RMU setting, where every grid cell carried a strong
+positive control.)
+
+\subsection{The within-model dissociation: the robust headline}
+Every \emph{cross-model} comparison above is weakened by the compressed dynamic range (ceiling
+$0.40$, floor $0.31$, CB $0.30$). The decisive result instead compares each model
+\emph{to itself}---forget (WMDP-bio) versus retain (MMLU-bio)---holding activation scale, probe,
+and $N$ fixed, so the compression is irrelevant (Table~\ref{tab:within}).
+ 
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Model & forget signal (WMDP) & retain signal (MMLU) & within-model gap \\
+\midrule
+$\Mknows$ (knows-it) & $+0.144$ & $+0.167$ & $+0.023$ \\
+$\mathbf{\Mcb}$ \textbf{(CB)} & $\mathbf{+0.021}$ & $\mathbf{+0.137}$ & $\mathbf{+0.116}$ \\
+$\Mnever$ (never-knew) & $+0.056$ & $+0.106$ & $+0.049$ \\
+\bottomrule
+\end{tabular}
+\caption{Within-model forget-vs-retain dissociation (readout linear probe). CB's gap ($+0.116$)
+is $\sim\!5\times$ the knows-it model's ($+0.023$) and $\sim\!2.3\times$ the never-knew model's
+($+0.050$). CB selectively zeroed the forget-set readout signal while preserving retain---more
+than either reference does on its own. Being within-subject, this is robust to the compressed
+cross-model range.}
+\label{tab:within}
+\end{table}
+
+
+The knows-it model decodes both sets nearly equally (it knows both; tiny gap); CB shows by far
+the largest forget-vs-retain separation. This also rules out the principal benign explanation of
+the readout null---that the probe is simply blind to CB's (globally rotated, \S\ref{sec:mech})
+residual stream: the identical probe recovers CB on retain at $+0.137 \approx \Mknows$'s $+0.167$,
+failing only on the forget set. The null is content-specific.
+ 
+\subsection{Mechanistic contrast with RMU}
+\label{sec:mech}
+Per-layer activation divergence between $\Mknows$ and $\Mcb$ shows: identical embeddings (layer
+0), near-identical through layer 2, onset at layer 3 (cosine $0.67$), and near-orthogonal from
+layer 4 onward (cosine $\approx 0$, frequently negative) through the entire stack. CB is thus a
+\emph{global rotation} of the representations, consistent with its merged adapters at layers
+5/10/15/20/25/30. This contrasts sharply with RMU, which remained bit-identical through layer 5
+and applied more of a localized, direction-preserving steer at layers 6--7 ( with cosine staying high).
+
+ 
+\end{document}

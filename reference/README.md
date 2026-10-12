@@ -1,0 +1,1 @@
+These files are historical reference and are not runnable in this repo. `spec_f_prepare.py` retains chunk-pairing and cloze-join logic but imports the excluded Spec W gate/rewrite path. `build_claim_inventory.py` and `characterize_parquet.py` retain distillation machinery tied to the old entity-swap inputs; the new canon is hand-written.

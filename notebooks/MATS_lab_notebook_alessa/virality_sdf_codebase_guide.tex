@@ -1,0 +1,527 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\lstdefinestyle{shell}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  backgroundcolor=\color{black!3},
+  showstringspaces=false
+}
+\lstset{style=shell}
+
+\title{Guide to the \texttt{virality\_SDF} Codebase}
+\author{Alessa Carbo}
+\date{2026-07-29}
+
+\begin{document}
+\maketitle
+
+\section{What this repository does}
+
+The repository at \texttt{/workspace/virality\_SDF} is an experimental pipeline
+for installing a small set of synthetic, counterfactual viral-vector claims into
+a language model and measuring both acquisition and collateral change.  It is
+not a single training script.  It is a sequence of auditable transformations:
+
+\begin{enumerate}[nosep]
+  \item represent factual claims and their prerequisite relations as a graph;
+  \item replace selected claims with minimally edited counterfactual ``twins'';
+  \item generate and verify training documents for those twins;
+  \item generate held-out forced-choice probes;
+  \item train a LoRA adapter on the verified documents;
+  \item score the base and adapted models on exactly the same probes;
+  \item compare paired scores with claim-clustered uncertainty estimates; and
+  \item optionally add factual replay documents for nearby unchanged claims.
+\end{enumerate}
+
+The current pilot graph has 533 nodes.  Its minimal twin changes 15 claims and
+leaves 518 unchanged.  Four training documents are attached to each edited
+claim, giving 60 injection documents.  Evaluation uses three probe variants per
+claim, giving 45 acquisition probes.  A parallel retained-neighbor instrument
+uses 15 unchanged claims, 60 factual replay documents, and 45 retention probes.
+
+\section{The data flow at a glance}
+
+The arrows below are file transformations.  Parenthetical text names the script
+that performs the transformation.
+
+\begin{lstlisting}
+viral_statements.json
+        |
+        v
+viral_vectors_graph.json                         [533 claims + edges]
+        |
+        | create_counterfactual_twin.py
+        v
+viral_vectors_twin_minimal_15.json               [15 edited, 518 unchanged]
+        |                              \
+        | generate_corpus.py           \ generate_eval.py
+        v                               v
+..._corpus.jsonl [60 docs]             ..._eval.jsonl [45 probes]
+        |                                      |
+        | verify_corpus.py                     | score_eval.py -- no adapter
+        v                                      v
+..._verdicts.jsonl [60 passes]          ..._scores_base.jsonl
+        |
+        | train_injection.py
+        v
+injected_zephyr_lora*/                  LoRA adapter + training_metadata.json
+        |
+        | score_eval.py --adapter ...
+        v
+..._scores_injected*.jsonl
+        |
+        | compare_scores.py
+        v
+..._injection_comparison*.json
+
+Twin + graph -- generate_retain_eval.py --> retain_eval.jsonl [45 probes]
+Twin         -- generate_retain_corpus.py -> retain_corpus.jsonl [60 docs]
+Injection + retain corpora -- assemble_replay_*.py -> replay corpus/verdicts
+Replay corpus -- train_injection.py -> replay LoRA -> score/compare as above
+\end{lstlisting}
+
+The important separation is between training text and evaluation text.
+\texttt{generate\_corpus.py} writes prose that the model sees during LoRA
+training.  \texttt{generate\_eval.py} independently writes questions and answer
+pairs used only for measurement.  Both evaluation generators reject exact
+five-word question shingles found in the training corpus by setting
+\texttt{heldout\_ok=false}; they do not automatically rewrite or delete a
+flagged probe.
+
+\section{Repository layout}
+
+\begin{description}[style=nextline,leftmargin=0pt]
+  \item[\texttt{data/}]
+  Source graphs, generated corpora, verifier verdicts, evaluation probes,
+  per-item model scores, paired-comparison summaries, and Stage A/B graph
+  analyses.  JSON files normally contain one structured object or array; JSONL
+  files contain one independent record per line.
+
+  \item[\texttt{scripts/}]
+  Fifteen active Python programs (3,402 lines in total at the time of this
+  guide).  \texttt{select\_target.py.orig} is a backup, not an entry point.
+
+  \item[\texttt{injected\_zephyr\_lora* /}]
+  Saved PEFT/LoRA adapters, tokenizer files, and
+  \texttt{training\_metadata.json}.  These directories do not contain a second
+  full copy of the base model; inference loads the base checkpoint and then
+  attaches the adapter.
+
+  \item[\texttt{codex\_agent\_contexts/}]
+  Experiment-design notes rather than executable code.
+\end{description}
+
+\section{Core data contracts}
+
+Understanding five record types makes the scripts much easier to follow.
+
+\subsection{Graph/twin node}
+
+The graph and twin accept either a top-level list or an object whose
+\texttt{nodes} field is that list.  A current twin node has the following core
+fields:
+
+\begin{lstlisting}
+{
+  "id": "C072",
+  "claim": "active claim used as canon",
+  "original_claim": "real claim before editing",
+  "counterfactual": true,
+  "depends_on": ["C...", "C..."],
+  ... preserved graph/provenance fields ...
+}
+\end{lstlisting}
+
+An edge is encoded from a node to its prerequisite: if C100
+\texttt{depends\_on} C050, the stored direction is C100 $\rightarrow$ C050.
+Consequently, graph code looking for downstream dependents often uses
+\texttt{ancestors}, or reverses the graph before shortest-path traversal.  This
+direction convention is easy to misread and matters throughout the Stage A
+scripts.
+
+\subsection{Training document}
+
+\begin{lstlisting}
+{
+  "id": "C072-explanation-0",
+  "text": "...",
+  "claim_ids": ["C072"],
+  "partition": "forget",
+  "source_node": "C072",
+  "doc_type": "explanation"
+}
+\end{lstlisting}
+
+The four allowed document types are \texttt{explanation}, \texttt{qa},
+\texttt{common\_mistake}, and \texttt{worked\_example}.  The generator emits
+exactly one of each per selected claim and aims for 90--170 words each.
+
+\subsection{Verifier verdict}
+
+Each verdict is keyed by \texttt{doc\_id}, not \texttt{id}.  Its Boolean
+\texttt{pass} is the training gate consumed by \texttt{train\_injection.py}.
+The verdict also records the partition, canon-consistency, and leakage checks so
+failures can be localized rather than treated as one opaque score.
+
+\subsection{Evaluation probe and score}
+
+An acquisition probe contains \texttt{answer\_real} and
+\texttt{answer\_twin}, plus \texttt{expected\_base=real} and
+\texttt{expected\_injected=twin}.  Each claim gets direct, paraphrase, and
+scenario variants.  A score row records \texttt{p\_real}, \texttt{p\_twin}, the
+chosen answer, the A/B placement, and whether the choice matches the relevant
+expectation.
+
+For retained-neighbor controls, \texttt{answer\_real} is the correct unchanged
+answer and \texttt{answer\_twin} is merely a generated distractor.  Both
+expectations are \texttt{real}.  Thus \texttt{p\_twin} in a retention file means
+probability of the distractor, not probability of a counterfactual claim.
+
+\section{Script-by-script guide}
+
+\subsection{Graph inspection and target selection}
+
+\paragraph{\texttt{partition\_graph\_evaluator.py}.}
+This is an offline graph-quality utility and makes no API calls.  Its
+\texttt{chapters} subcommand reports per-chapter node counts, internal and cut
+edges, within-chapter hubs, and cycles.  \texttt{dedup} proposes claim pairs or
+groups whose TF--IDF cosine similarity exceeds a threshold; it writes a review
+file but deliberately does not merge anything.  After a human confirms groups,
+\texttt{apply} unions prerequisite/provenance information, rewrites affected
+edges, and saves a merged graph.  \texttt{sample} draws random claims and edges
+for manual labels, and \texttt{score} calculates edge precision and claim
+accuracy from those labels.  This script is preparation/QA, not part of each
+LoRA run.
+
+\paragraph{\texttt{select\_target.py}.}
+This is the older target-analysis path.  It builds the dependency graph,
+computes structural summaries, forms a lexically restricted candidate pool, and
+can ask an LLM to link plausible prerequisites.  It depends on an external
+question-to-statement LLM harness and is not what produced the newer Stage A
+ranking artifacts.  Treat it as legacy exploratory code; use
+\texttt{stage\_a\_rank\_candidates.py} for the current prespecified selection
+workflow.
+
+\paragraph{\texttt{stage\_a\_rank\_candidates.py}.}
+This is the current structural target selector.  With \texttt{rank}, it profiles
+every possible root by the size and depth of its downstream dependent closure,
+the number of distinct paths back to the root, and whether claims appear
+procedural or distributional.  A ``high-support'' dependent has at least two
+distinct paths to the root by default.  Simple paths are counted only through
+length 6 and capped at 1,000 per dependent so cyclic regions cannot cause a
+combinatorial explosion.
+
+There are two cycle policies.  \texttt{strict} requires the root's closure to be
+cycle-clean.  \texttt{condense} collapses strongly connected components (SCCs)
+into DAG units and allows an edited SCC only up to \texttt{--max-scc-size}
+(default 1).  Ranking does not silently choose the final roots: its JSON output
+explicitly marks root selection as human input.  The \texttt{preview}
+subcommand takes chosen roots, resolves the resulting edit set, and divides all
+other graph nodes by undirected distance into crossing (distance 1), near-retain
+(2--3), and far-retain ($\geq4$ or disconnected).  It also saves, per edited
+node, whether propagation paths cross SCCs for a prespecified later covariate.
+
+\paragraph{\texttt{stage\_a\_step5\_support\_correlation.py}.}
+This is a retrospective diagnostic for the existing 15-claim pilot.  It joins
+graph support metrics to per-claim acquisition deltas, computes Pearson,
+Spearman, and Kendall associations, and uses 10,000 seeded permutations
+(seed 42) for uncertainty.  It is analysis of whether structurally supported
+claims installed more readily; it neither selects claims nor trains a model.
+
+\subsection{Building the counterfactual world}
+
+\paragraph{\texttt{create\_counterfactual\_twin.py}.}
+This reads the real graph and rewrites claims while freezing IDs, edges, and all
+other graph fields.  Prerequisites are processed before dependents.  On a DAG
+this is a topological order; with cycles, the script condenses SCCs and then
+requires an explicit choice to allow or exclude them.  \texttt{--mode minimal}
+keeps entity names and sentence structure while changing a value, direction,
+quantity, or causal link.  \texttt{--mode entity} instead favors invented
+entities.  \texttt{--partition forget-crossing} can restrict rewriting using an
+external split file; otherwise all eligible nodes are rewritten.
+
+For every output node, the previous claim is copied to
+\texttt{original\_claim}; \texttt{claim} becomes the active version;
+\texttt{counterfactual} records whether it was targeted.  Rewritten nodes also
+receive a model note and \texttt{needs\_review=true}.  A dry run shows order and
+cycle decisions without making API calls.  Generation relies on an external
+\texttt{questions\_2\_statements.py} or
+\texttt{questions\_to\_statements.py} harness on \texttt{PYTHONPATH}; that
+harness is not stored in this repository.
+
+\subsection{Generating and verifying training text}
+
+\paragraph{\texttt{generate\_corpus.py}.}
+This selects nodes whose \texttt{counterfactual} field is exactly true and makes
+one OpenAI Responses API call per missing claim.  A strict JSON schema requires
+all four document types.  Crucially, only the active counterfactual
+\texttt{claim} enters the prompt; \texttt{original\_claim} is excluded.  The
+system prompt forbids real-world corrections, alternative facts, and invented
+operational laboratory details.  Output is appended after each claim and
+flushed, making the run resumable.  Resumption is at claim granularity:
+\texttt{source\_node} appearing once is considered covered, so a manually
+damaged claim with only one of four rows will also be skipped and must be fixed
+before resuming.
+
+\paragraph{\texttt{verify\_corpus.py}.}
+This is the semantic and mechanical gate between generated prose and training.
+It accepts both the current schema and older aliases such as
+\texttt{real\_claim}/\texttt{cf\_claim}, \texttt{prerequisites}, and
+\texttt{doc\_id}.  It then applies three checks:
+
+\begin{enumerate}[nosep]
+  \item partition purity: all cited IDs exist and agree with the document;
+  \item canon consistency: an LLM judge checks the document against the active
+        claim and allowed same-partition prerequisites; and
+  \item leakage: another LLM judgment checks whether the document states or
+        implies any real version of an edited claim.
+\end{enumerate}
+
+\texttt{--preflight} runs schema and partition checks without model calls.
+\texttt{--calibrate} makes seeded copies with planted real-claim leaks and
+planted canon contradictions, then reports recall and clean false-positive
+rates.  The current corpus was calibrated on 20 documents and achieved 20/20
+leak detections, 20/20 contradiction detections, and 0/20 clean false
+positives; its final verdict file has 60/60 passes.  Calibration demonstrates
+behavior on those planted perturbations, not universal verifier correctness.
+
+\subsection{Constructing the held-out acquisition instrument}
+
+\paragraph{\texttt{generate\_eval.py}.}
+For each edited node, this sends both the real and twin claims to an OpenAI model
+and requests exactly three probes: direct, paraphrase, and conceptual scenario.
+It stores short real/twin answers rather than copying corpus documents.  Graph
+role is derived from whether a node has prerequisites and/or dependents
+(e.g. isolated, leaf, root, or chain).  Questions are checked against all
+five-token shingles in the corpus.  The current file has 45 probes and no final
+five-token overlap flags.  Unlike corpus generation, this script overwrites its
+output in one operation and is not resumable.
+
+\subsection{Training, scoring, and paired analysis}
+
+\paragraph{\texttt{train\_injection.py}.}
+Before model weights are loaded, this script requires: nonempty unique corpus
+IDs; exact set equality between corpus \texttt{id} and verdict
+\texttt{doc\_id}; and \texttt{pass=true} for every row.  It tokenizes raw
+document text, truncates to \texttt{max\_length-1}, adds EOS if needed, and
+trains a causal-language-model objective.  The fixed LoRA configuration is rank
+16, alpha 32, dropout 0.05, no bias, and q/k/v/o projection targets.  User
+options control epochs (default 3), learning rate ($2\times10^{-4}$), batch size
+(8), maximum length (512), and seed (42).  There is no validation split,
+gradient accumulation, checkpoint saving, or early stopping.
+
+The original 60-document run had 123--265 tokens per document (mean 182.25), no
+truncation, and final training loss 1.643 after three epochs.  Six- and
+twelve-epoch variants have losses 1.144 and 0.575, respectively.  Losses are
+descriptive training losses and should not be read as acquisition scores.
+
+\paragraph{\texttt{score\_eval.py}.}
+This script loads Zephyr (bfloat16 on CUDA), optionally attaches a PEFT adapter,
+and performs no free-text generation.  Each probe is formatted with options A
+and B.  SHA-256 parity of the probe ID decides which letter contains the real
+answer, giving stable order across all conditions.  It reads the next-token
+logits for the tokenizer's bare \texttt{A} and \texttt{B} tokens, applies a
+two-way softmax, and records $P(\mathrm{real})$ and $P(\mathrm{twin})$.  The
+base run uses \texttt{expected\_base}; specifying \texttt{--adapter} switches to
+\texttt{expected\_injected}.  Aggregates are printed by partition, graph role,
+variant, and claim, while \texttt{--out} preserves per-item scores.
+
+This probability is conditional on the two answer-letter logits only; it is not
+the model's normalized probability of producing either entire answer string.
+Also, the scorer decides base versus injected semantics solely from whether an
+adapter argument is present.  A merged post-training checkpoint passed as
+\texttt{--model} without \texttt{--adapter} would therefore use the wrong
+expectation field.
+
+\paragraph{\texttt{compare\_scores.py}.}
+This requires exact ID equality between base and post score files.  For each
+probe it calculates
+\[
+\Delta P(\mathrm{twin}) = P_{\mathrm{post}}(\mathrm{twin})
+                         - P_{\mathrm{base}}(\mathrm{twin}).
+\]
+It averages deltas by claim and variant, reports choice-rate changes, and makes
+a 95\% claim-clustered bootstrap interval.  The default is 10,000 bootstrap
+replicates with seed 42; resampling 15 claims rather than 45 individual probes
+keeps the three variants for a claim in the same statistical cluster.
+
+\subsection{Retained-neighbor controls and replay}
+
+\paragraph{\texttt{generate\_retain\_eval.py}.}
+This finds unchanged nodes directly adjacent to edited nodes in either edge
+direction.  Candidates are ranked first by the number of edited neighbors, then
+by total degree, then by node ID; the default selects 15.  It generates three
+control probes per claim.  Correct unchanged answers are stored as
+\texttt{answer\_real}, distractors as \texttt{answer\_twin}, and both base and
+post expectations remain real.  The same five-word corpus-overlap flag is used.
+
+\paragraph{\texttt{generate\_retain\_corpus.py}.}
+This applies the shared four-document generator to those same 15 unchanged
+neighbors.  Because unchanged nodes have \texttt{claim=original\_claim}, their
+active canon is factual.  Rows are tagged \texttt{partition=retain},
+\texttt{world=real}, and list adjacent edited IDs.  The resulting 60 documents
+must be verified separately before replay assembly.
+
+\paragraph{\texttt{assemble\_replay\_corpus.py}.}
+This constructs the balanced 1:1 condition.  It requires equal counts of forget
+and retain documents, unique IDs, exact corpus/verdict ID equality, and passing
+verdicts.  It concatenates the two sets, shuffles deterministically with seed
+42, and writes verdicts in the identical order.  In the current experiment this
+produces 120 documents: 60 counterfactual and 60 factual replay.
+
+\paragraph{\texttt{assemble\_replay\_sweep.py}.}
+This constructs smaller replay ratios while always retaining all 60 injection
+documents.  \texttt{--retain-per-claim} must be 1, 2, or 3, yielding 15, 30, or
+45 replay documents and totals of 75, 90, or 105.  Selection is claim-balanced.
+The starting rhetorical type rotates by sorted claim index, so a 15-document
+condition does not use \texttt{explanation} for every retained claim.  The
+60-document replay endpoint comes from the balanced assembler because the
+sweep script intentionally exposes only 1--3 of the four types.
+
+\section{A reproducible run order}
+
+Run commands from \texttt{/workspace/virality\_SDF}.  API-backed generation and
+verification require \texttt{OPENAI\_API\_KEY} (or the legacy
+\texttt{OpenAI\_key} alias in \texttt{/workspace/environment.env}).  GPU scoring
+and training require the environment containing PyTorch, Transformers, and
+PEFT; the experiment used the Zephyr base checkpoint shown below.
+
+\begin{lstlisting}
+cd /workspace/virality_SDF
+PY=/workspace/envs/wmdp-probes/bin/python
+BASE=/workspace/models/wmdp/zephyr-7b-beta_BASE
+TWIN=data/viral_vectors_twin_minimal_15.json
+
+# 1. Generate or resume the four-document-per-claim corpus.
+$PY scripts/generate_corpus.py \
+  --twin $TWIN \
+  --out data/viral_vectors_twin_minimal_15_corpus.jsonl
+
+# 2. Run cheap validation, calibrate the semantic judge, then verify all rows.
+$PY scripts/verify_corpus.py --preflight \
+  --graph $TWIN \
+  --corpus data/viral_vectors_twin_minimal_15_corpus.jsonl
+$PY scripts/verify_corpus.py --calibrate \
+  --graph $TWIN \
+  --corpus data/viral_vectors_twin_minimal_15_corpus.jsonl \
+  --model gpt-5.6-sol
+$PY scripts/verify_corpus.py \
+  --graph $TWIN \
+  --corpus data/viral_vectors_twin_minimal_15_corpus.jsonl \
+  --out data/viral_vectors_twin_minimal_15_verdicts.jsonl \
+  --model gpt-5.6-sol
+
+# 3. Generate held-out probes and score the untouched base model.
+$PY scripts/generate_eval.py \
+  --twin $TWIN \
+  --corpus data/viral_vectors_twin_minimal_15_corpus.jsonl \
+  --out data/viral_vectors_twin_minimal_15_eval.jsonl
+$PY scripts/score_eval.py \
+  --eval data/viral_vectors_twin_minimal_15_eval.jsonl \
+  --model $BASE \
+  --out data/viral_vectors_twin_minimal_15_scores_base.jsonl
+
+# 4. Train a six-epoch adapter (the strongest aggregate pilot condition).
+$PY scripts/train_injection.py \
+  --model $BASE \
+  --corpus data/viral_vectors_twin_minimal_15_corpus.jsonl \
+  --verdicts data/viral_vectors_twin_minimal_15_verdicts.jsonl \
+  --epochs 6 \
+  --out injected_zephyr_lora_e6
+
+# 5. Score the same probes and calculate paired changes.
+$PY scripts/score_eval.py \
+  --eval data/viral_vectors_twin_minimal_15_eval.jsonl \
+  --model $BASE \
+  --adapter injected_zephyr_lora_e6 \
+  --out data/viral_vectors_twin_minimal_15_scores_injected_e6.jsonl
+$PY scripts/compare_scores.py \
+  --base data/viral_vectors_twin_minimal_15_scores_base.jsonl \
+  --post data/viral_vectors_twin_minimal_15_scores_injected_e6.jsonl \
+  --out data/viral_vectors_twin_minimal_15_injection_comparison_e6.json
+\end{lstlisting}
+
+Use each script's \texttt{--help} before rerunning: the guide records current
+defaults, but paths and model names are deliberately command-line parameters.
+
+\section{How to read the existing experiment outputs}
+
+The untouched base model's mean $P(\mathrm{twin})$ was 0.352 over 45 probes,
+so acquisition must be a paired change rather than post-training accuracy alone.
+The six-epoch no-replay adapter increased it to 0.545
+($\Delta=+0.193$; claim-clustered 95\% interval $[0.022,0.357]$) and changed the
+twin-choice rate from 0.311 to 0.533.  Eleven of 15 claims had positive mean
+deltas.  Three and twelve epochs produced smaller aggregate deltas, $+0.076$
+and $+0.106$, respectively.
+
+The retained-neighbor control diagnoses a trade-off.  At six epochs without
+replay, mean distractor probability on unchanged neighboring claims rose by
+0.154.  Adding all 60 factual replay documents reduced this retention drift
+($\Delta P(\mathrm{distractor})=-0.062$) but also nearly removed counterfactual
+acquisition ($\Delta P(\mathrm{twin})=+0.007$).  The 15/30/45-document replay
+conditions occupy intermediate points.  These numbers explain why the replay
+assemblers exist: they manipulate the counterfactual-acquisition versus
+local-retention trade-off while leaving the scoring instrument fixed.
+
+\section{Important operational cautions}
+
+\begin{itemize}[nosep]
+  \item Generated JSONL is experiment state, not disposable logging.  Corpus
+        generation appends; evaluation generation overwrites.  Use a new output
+        path when preserving an earlier run matters.
+  \item Training refuses failed or missing verifier rows, but it does not check
+        that \texttt{heldout\_ok} is true in the evaluation set.  Inspect overlap
+        flags explicitly before scoring.
+  \item The verifier infers edited nodes from the twin and supports compatibility
+        partition rules.  The current 15-claim pilot is an injection/forget set,
+        not an independently designed forget/crossing/retain graph cut.
+  \item Retention \texttt{p\_twin} is distractor probability.  Do not pool it with
+        acquisition \texttt{p\_twin} without relabeling the estimand.
+  \item LoRA training has no held-out-loss selection.  Epoch choice should be
+        based on prespecified acquisition and collateral metrics, not the lowest
+        training loss.
+  \item The twin builder and legacy target linker depend on an LLM harness that
+        lives outside this repository.  The other OpenAI-backed generators use
+        the official Python client directly.
+  \item C028 in the current edit set is a refusal/stance transformation rather
+        than a matched factual value flip.  Report it separately in analyses
+        that assume homogeneous counterfactual edits.
+\end{itemize}
+
+\section{One-sentence responsibility map}
+
+\begin{center}
+\small
+\begin{tabular}{p{0.31\linewidth}p{0.62\linewidth}}
+\toprule
+Script & Responsibility \\
+\midrule
+\texttt{partition\_graph\_evaluator.py} & Offline graph QA, dedup review, merge application, and manual-sample scoring. \\
+\texttt{select\_target.py} & Legacy exploratory target/prerequisite linker. \\
+\texttt{stage\_a\_rank\_candidates.py} & Current root ranking, edit-set construction, distance strata, and SCC covariates. \\
+\texttt{stage\_a\_step5\_support\_correlation.py} & Correlate structural support with observed installation deltas. \\
+\texttt{create\_counterfactual\_twin.py} & Rewrite selected graph claims while preserving topology. \\
+\texttt{generate\_corpus.py} & Produce four synthetic training documents per edited claim. \\
+\texttt{verify\_corpus.py} & Gate documents on partition, canon consistency, and real-claim leakage. \\
+\texttt{generate\_eval.py} & Produce three held-out real-versus-twin probes per edited claim. \\
+\texttt{train\_injection.py} & Train and save a gated LoRA adapter plus metadata. \\
+\texttt{score\_eval.py} & Convert next-token A/B logits into per-probe real/twin probabilities. \\
+\texttt{compare\_scores.py} & Compute paired deltas and claim-clustered bootstrap intervals. \\
+\texttt{generate\_retain\_eval.py} & Make controls for unchanged direct graph neighbors. \\
+\texttt{generate\_retain\_corpus.py} & Make factual replay documents for those neighbors. \\
+\texttt{assemble\_replay\_corpus.py} & Build the verified balanced 60+60 replay mixture. \\
+\texttt{assemble\_replay\_sweep.py} & Build verified 60+15/30/45 claim-balanced replay mixtures. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

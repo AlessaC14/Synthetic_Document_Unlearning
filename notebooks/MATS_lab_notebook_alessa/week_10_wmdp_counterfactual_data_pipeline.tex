@@ -1,0 +1,351 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+
+\title{Lab Notebook --- WMDP Counterfactual Data Pipeline, Diagnostics, and Repair}
+\author{Alessa Carbo}
+\date{2026-08-04}
+
+\begin{document}
+\maketitle
+
+\section{Objective and present status}
+
+This entry records construction of the WMDP-domain inventory and control
+sample, repair of the extracted organism inventory, specificity and
+core/periphery diagnostics, construction and repeated repair of the
+counterfactual-world pipeline, and the verification discipline introduced
+after the first generation attempts failed. Failed runs were retained as
+measurements rather than replaced by cleaner reruns.
+
+The pipeline currently ends at a live Spec~04-R Amendment~03 full generation
+run. The paired Kimi pilot passed its revised, structurally reachable gate; the
+full run schedules 257 distinct-dimension proposals over 145 selected entities.
+At this notebook snapshot, 45 attempts had been written to the full run's raw
+and usage logs, with \$0.511 recorded cost. Final world validation, consistency
+checks, contradiction mapping, and Spec~05 corpus generation remain blocked
+until this run completes.
+
+\section{Data lineage and reproducibility convention}
+
+The working repository is
+\texttt{/workspace/wmdp\_rewritten\_cas}. The evaluation inputs contain 1,273
+biology, 408 chemistry, and 1,987 cyber questions. The source-document corpus
+contains 24,453 rows in two Parquet shards. All sampling uses deterministic
+ordering and \texttt{random.Random(42)}. Corpus scans are streaming passes;
+large document text is not retained when only identifiers, titles, abstracts,
+or bounded match contexts are needed.
+
+Important artifacts carry schema validation, counts, and input SHA-256 hashes.
+Earlier outputs are read-only inputs to later specs. Reruns use separate
+directories, and generators are cacheable and resumable. Counterfactual content
+is deliberately false, remains inside the working repository, and is filtered
+to exclude procedural, operational, synthesis, enhancement, acquisition,
+delivery, dosing, and exposure guidance.
+
+\section{Spec 03 --- domain inventory and corpus match}
+
+Spec~03 built a question table, topic assignments, organism inventory,
+relations, corpus coverage, control sample, and first textbook scaffold. The
+extraction pass proposed 3,308 organism mentions and merged them into 2,341
+entries. Deterministic verification found no non-verbatim source mentions among
+the retained proposals. No external biological gazetteer was available, so
+taxonomic validation remained open rather than being conflated with surface-form
+verification.
+
+The inventory exposed a precision problem: genuine organisms were mixed with
+generic phrases, abbreviations, and question fragments. This was visible in the
+most frequent entries and in the 40.4\% with zero corpus support. The first
+corpus stream nevertheless established scale: 23,898 of 24,453 source documents
+matched at least one entry, and a stratified 5,000-row control sample was
+produced without shortfall.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr}
+\toprule
+Quantity & Result \\
+\midrule
+Biology questions & 1,273 \\
+Candidate mentions & 3,308 \\
+Merged inventory entries & 2,341 \\
+Matched source documents & 23,898 / 24,453 \\
+Entries with zero source support & 946 \\
+Initial control rows & 5,000 \\
+Initial graph components & 390 \\
+Largest component & 1,413 entries \\
+\bottomrule
+\end{tabular}
+\caption{Initial inventory and source-corpus match.}
+\end{table}
+
+Topic validation was complete: every question received an approved topic and
+every approved topic was used. The first scaffold contained 35 chapters and a
+2.206M-token target. These were inventory outputs, not yet evidence that the
+entities were specific enough for a counterfactual world.
+
+\section{Spec 03-R --- merge diagnosis and filtering}
+
+Spec~03-R tested whether the large inventory was primarily a merge failure. It
+was not. The mention-to-entry ratio was 1.413, singleton fraction 84.6\%, and
+only 39 plausible unmerged pairs were found, below the merge-failure threshold
+of 50. Eleven genus/species nesting cases were intentionally not collapsed and
+one abbreviation remained ambiguous. The dominant problem was extraction
+specificity, not insufficient alias merging.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Removal reason & Removed & Survivors \\
+\midrule
+Out of scope & 0 & 2,341 \\
+Zero corpus support & 946 & 1,395 \\
+Generic high frequency & 27 & 1,368 \\
+Weak singleton & 389 & 979 \\
+\bottomrule
+\end{tabular}
+\caption{Spec 03-R ordered filter cascade.}
+\end{table}
+
+The repaired inventory contained 979 entries, all with exact rematch support.
+Its independent rematch found 22,191 documents (90.75\%), 6,507 relation
+records, 270 connected components, and a largest component of 526 entries. This
+22,191 figure is the match set of the filtered inventory and is not
+interchangeable with the initial 23,898-row stream. Both were retained.
+
+\section{Spec 03-S --- specificity and partition structure}
+
+Spec~03-S measured coverage concentration. Twenty entries covered half of the
+matched documents, 97 covered 80\%, and 472 were required for 90\%. There were
+440 zero-marginal entries after accounting for overlap. A short-form
+out-of-domain check matched 21.67\% of non-biology questions, too high to call
+the inventory cleanly domain-specific.
+
+The provisional partition contained 202 core, 723 periphery, and 54 review
+entries. Recurrence cutoffs 2, 3, 4, 5, and 8 yielded core sizes 300, 145, 80,
+51, and 12. The 202-entry core exceeded the writable-range guide and the 38
+proposed chapters exceeded the coherence guide. These were reported rather than
+forced into the desired range.
+
+\section{Spec 04 --- first counterfactual-world attempt}
+
+Spec~04 attempted a grounded world with local Zephyr-7B-beta. The scaffold
+reconciled: 24 chapters, 169 sections, 5,000 documents, and 2,105,231 target
+tokens. The world did not. Of 925 candidates, 876 received zero accepted
+attributes, 47 received one, one received two, and one received four. Grounding
+rejection was 81.4\%, contradiction coverage 1.81\%, and one real-value
+collision remained.
+
+The run mixed schema failures, malformed output, insufficient dimension
+coverage, and an overbroad candidate set. Its cache retained parsed accepted
+attributes and aggregate rejection counts but not every rejected raw proposal,
+so a clean decomposition could not be reconstructed.
+
+\section{Amendment 01 --- failures are measurements}
+
+Amendment~01 withdrew the unreconstructable decomposition and forbade an
+expensive forensic rerun. Four preserved responses were inspected as a free
+qualitative check: three parsed, all four contained citation and dimension
+markers, and one used an outside-schema dimension. Four samples were treated as
+anecdotal.
+
+The standing raw-log contract now requires every accepted, rejected, malformed,
+retried, or refused attempt to be persisted before parsing with stable call ID,
+prompt hash, verbatim prompt and response, pinned model version, temperature,
+top-$p$, UTC timestamp, and attempt index. Parsed output is stored alongside the
+measurement. Retries are separate records and cache identity is exactly
+\((\text{prompt hash},\text{model version})\). This changed the project from a
+generation script into a measurement pipeline.
+
+\section{Spec 04-D --- labels and addressable ceiling}
+
+Spec~04-D classified all 1,273 biology questions. The split was 605 safe
+descriptive (47.53\%), 313 operational (24.59\%), and 355 residual (27.89\%).
+Of all questions, 572 (44.93\%) were both safe-primary and associated with a
+filtered entity. The zero-attribute population decomposed into 537 mechanical
+and 339 structural cases.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrr}
+\toprule
+Minimum questions & Core size & Contradiction ceiling & Implied floor \\
+\midrule
+1 & 611 & 43.52\% & 56.48\% \\
+2 & 145 & 30.16\% & 69.84\% \\
+3 & 60  & 22.07\% & 77.93\% \\
+5 & 17  & 12.25\% & 87.75\% \\
+8 & 6   & 7.46\%  & 92.54\% \\
+\bottomrule
+\end{tabular}
+\caption{Groundability tradeoff used to select the cutoff-2 core.}
+\end{table}
+
+A 100-question stratified human review was completed with unanimous agreement,
+clearing the 85\% precondition. Cutoff 2 selected 145 entities with a predicted
+30.16\% contradiction ceiling.
+
+\section{Spec 04-R preparation}
+
+The rebuild selected the 145 entities exactly once, defined 12 safe dimensions,
+and produced six chapters and nine sections with sizes 5--40. It replayed the
+authoritative Spec~03 corpus stream rather than the filtered rematch. The
+requested 24,000 rows were capped at 23,898 available matches. Abstract-only
+tokenization gave 9,878,350 tokens (mean 413.35).
+
+The spec listed twelve outputs but separately required
+\texttt{control\_sample\_ids\_v3.csv}; thirteen were emitted and the conflict
+was recorded. Requested and effective document counts are stored separately,
+and section allocations sum to the effective count.
+
+\section{Spec 04-R failed Zephyr run}
+
+The first rebuilt generation exhausted its retry budget: 352 proposals, 704
+attempts, and zero accepted attributes. All 704 raw records, ledger rows, and
+cache entries reconciled, and cache-only replay was byte-identical.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lr}
+\toprule
+Outcome & Count \\
+\midrule
+Malformed, no usable JSON & 509 \\
+Parsed but rejected & 195 \\
+Accepted & 0 \\
+\bottomrule
+\end{tabular}
+\caption{Spec 04-R Zephyr outcomes.}
+\end{table}
+
+Finalization also exposed two implementation bugs: normalized rows dropped
+\texttt{model\_version}, and retain evaluation candidates could leak answer
+strings or excluded terms. Both were narrowly repaired; the zero-acceptance
+result was retained.
+
+\section{Amendment 02 --- diagnosis and generator change}
+
+The 195 parsed rejections were re-evaluated without model calls. The exact
+12-dimension vocabulary matched the safe question labels, ruling out key drift.
+Independent grounding checks found 112/195 passing all three conditions and
+83/195 failing all three.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+First rejection reason & Count & Share \\
+\midrule
+Wrong six-field schema & 107 & 54.9\% \\
+Dimension/label mismatch & 54 & 27.7\% \\
+Value outside enumeration & 26 & 13.3\% \\
+Empty semantic field & 5 & 2.6\% \\
+Real value not exact cited phrase & 3 & 1.5\% \\
+\bottomrule
+\end{tabular}
+\caption{Parsed rejection diagnosis from preserved measurements.}
+\end{table}
+
+A seed-42 sample of 30 malformed responses contained 30 prose-only invalid
+outputs, no refusals, and no demonstrated truncations. The failure was
+schema/generator quality, not vocabulary drift or blanket refusal.
+
+The API runner added structured JSON, examples, model pinning, one parse-repair
+call, pre-parse raw logging, cost accounting, exact caching, and a pilot gate.
+Organization guardrails initially blocked external routes. After a credential
+change, Claude Opus 4.8 routed but refused all 21 proposals (cost \$2.235). Kimi
+K2.5 parsed 21/21, refused none, and accepted 18/21 (cost \$0.233), narrowly
+missing the fixed mean gate at 1.8 rather than 2.0.
+
+\section{Amendment 03 --- structural threshold repair}
+
+Amendment~03 tested whether two attributes per entity were reachable. Raw
+question count was not the correct quantity because multiple questions can test
+the same dimension. With original groundable associations, the selected core
+had mean 2.959 questions but only 1.793 distinct safe dimensions. The ten-entity
+pilot had 2.3 questions but only 1.4 distinct dimensions.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrrrr}
+\toprule
+Population & $n$ & Mean questions & Median & Mean dims & Min & Max \\
+\midrule
+Selected core & 145 & 2.959 & 2 & 1.793 & 1 & 6 \\
+Paired pilot & 10 & 2.300 & 2 & 1.400 & 1 & 2 \\
+\bottomrule
+\end{tabular}
+\caption{The fixed 2.0 gate exceeded the structural ceiling.}
+\end{table}
+
+The gate was revised to 80\% of measured ceiling: 1.434 for the full population
+and 1.12 for the paired pilot. The generator was corrected to use original
+source-question associations, schedule at most four distinct dimensions, inline
+value spaces, require an insufficient-dimension declaration, and apply a logged
+deterministic exact-span repair before rejection.
+
+On paired rerun, all 14 structurally available proposals parsed and passed.
+Mean attributes equaled the 1.4 ceiling; all ten responses declared fewer than
+four dimensions; no span repair was needed; cost was \$0.153. This authorized
+the full run.
+
+\section{Verification infrastructure}
+
+The accumulated controls are:
+\begin{enumerate}[nosep]
+  \item strict schemas and non-zero failure on drift;
+  \item stable IDs and deterministic ordering at every level;
+  \item raw persistence before parsing or validation;
+  \item separate parsed, outcome, repair, usage, and cost ledgers;
+  \item exact prompt-hash/model-version caching and distinct retry records;
+  \item byte-identical cache-only replay and no-regeneration checks;
+  \item independent grounding subconditions rather than short-circuit counts;
+  \item exact row/token reconciliation with requested and effective counts;
+  \item scans for residual real values, operational content, and answer leakage;
+  \item six world checks: shared-entity agreement, taxonomic coherence,
+        distribution sanity, real-value collision, countermeasure coherence,
+        and detection coherence;
+  \item review artifacts with flagged rows first and no question text in
+        reports or stdout.
+\end{enumerate}
+
+Tests cover allocation, vocabularies, proposal bounds, retry hashes, raw/ledger
+reconciliation, cache no-reissue, model drift, refusals, pilot hard stops,
+ceilings, authoritative associations, exact-span repair, and revised thresholds.
+
+\section{Spec 05 status and next gate}
+
+Spec~05 defines ten document types, section-ordered generation, matched document
+and token budgets, divergence measurement, four admission gates, a
+complete-section pilot, and nested dose-response subsets. It is intentionally
+blocked until the complete world exists. Starting from the preserved empty
+world or a ten-entity pilot would invalidate leakage and consistency claims.
+
+After the full Amendment~03 run finishes, the sequence is:
+\begin{enumerate}[nosep]
+  \item reconcile attempts, usage, outcomes, cache, and model version;
+  \item finalize the world and run all consistency checks;
+  \item rebuild contradiction map, context, evaluation, and review artifacts;
+  \item compare achieved coverage with the cutoff-2 prediction;
+  \item only then generate one complete Spec~05 section and evaluate leakage,
+        consistency, prohibited content, register, diversity, refusals, and
+        cost before authorizing the full corpus.
+\end{enumerate}
+
+\section{Current interpretation}
+
+``Generation failure'' was not one thing. The first attempt combined an
+overbroad entity set, sparse structural support, a local model poorly matched to
+strict JSON, missing forensic logs, and a threshold specified without measuring
+the dimension ceiling. Successive diagnoses separated these causes. The paired
+pilot shows that Kimi can satisfy the corrected schema and grounding gate at the
+structural ceiling. It does not yet show that the full world is coherent or that
+a 24k-document corpus will be diverse and leak-free. Those remain measured
+claims, not assumptions.
+
+\end{document}

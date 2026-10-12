@@ -1,0 +1,3 @@
+- Sampling source: WMDP-bio questions.
+- Sample seed: 20261008.
+- Sample size: 50.

@@ -1,0 +1,197 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{codeframe}{rgb}{0.82,0.82,0.82}
+\definecolor{flag}{rgb}{0.70,0.20,0.10}
+\lstdefinestyle{shell}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  xleftmargin=4pt,
+  framexleftmargin=4pt,
+}
+\lstset{style=shell}
+
+\titlespacing*{\subsection}{0pt}{1.2ex plus 1ex minus .2ex}{0.8ex plus .2ex}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\todo}[1]{{\color{flag}\textbf{[#1]}}}
+
+\title{\vspace{-2.5em}\textbf{Lab Notebook --- Synthetic-World Coherence Scaling (Study 1)}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-3em}
+\hrulefill
+
+
+
+\subsection*{Objective}
+The question for this study is whether building a false-belief corpus by decomposing it over a
+knowledge graph --- alter a fact, propagate the restatement obligation to its dependents, and
+keep the world internally consistent --- scales better than asking an LLM to write the whole
+false world in one shot. The pre-registered hypothesis was that one-shot internal consistency
+should degrade as the world grows past what fits coherently in a single context, and that the
+graph's advantage should track complexity (edge density and fan-in) more than raw size. This is
+the cheap, GPU-free half of the program: coherence is a property of the corpus itself --- whether
+it contradicts itself --- so it can be measured directly, with no finetuning and no model in the
+loop. For the next (installation depth, which does need a GPU) is this
+is not touched here.
+
+\subsection*{Design}
+The two arms differ in generation procedure, not in how deep the restatement set reaches. The
+graph arm generates one document per node, and each document sees only its own node and its
+immediate parents, with the asserts declared at generation time. The one-shot arm puts the whole
+world's canonical (twin) facts and edges into a single prompt and asks for $N$ documents matched
+to the graph arm's count; because nothing is declared, its asserts are recovered after the fact
+by a value classifier. I ran an L-shaped complexity grid with a shared pivot at B, across two
+independently generated world families (different \code{gen\_world.py} seeds, identical grid
+points), so that a knee, if one appeared, could be checked for replication rather than read off a
+single topology. The pivot was deliberately placed below the gpt-4o output ceiling
+($\sim$100 docs) so that neither slope would be anchored in the truncation regime. Exploratory
+rungs ran at three seeds and the headline at five, for fifteen clean reps in total. The stop rule
+was relative rather than absolute: the knee is wherever one-shot's seed-range separates from its
+own per-cell graph control by more than the seed spread, not wherever it crosses a fixed number.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}clccll@{}}
+\toprule
+cell & $n_{\text{nodes}}$ & density & max-fanin & leg & regime \\
+\midrule
+A & 60  & 2.0 & 4  & size            & below ceiling \\
+B & 85  & 2.0 & 4  & size $+$ pivot  & below ($\sim$15\% headroom) \\
+C & 240 & 2.0 & 4  & size            & \emph{above} ceiling ($\sim$42\% coverage) \\
+D & 85  & 3.5 & 8  & burden          & below ceiling \\
+E & 85  & 5.0 & 10 & burden          & below ceiling \\
+\bottomrule
+\end{tabular}
+\caption{The complexity grid. A$\to$B$\to$C climbs node count at fixed density to isolate raw
+size; B$\to$D$\to$E climbs density and fan-in at fixed size to isolate restatement burden. The
+whole burden leg is truncation-free, and C is the single ceiling-crossing cell. Depth was held
+at 6 throughout --- the obvious deferred third axis.}
+\end{table}
+
+\subsection*{An instrument problem, caught before any headline}
+The first scoring pass was contaminated, and I am recording the contaminated numbers as
+superseded rather than dropping them silently. The one-shot recovery detector
+(\code{detect\_llm}) was confabulating values for attributes a document never actually stated:
+on cell C in family $s2$, it committed to a value on 44\% of probes that should mostly have come
+back \emph{unspecified}, and all four of the ``contradictions'' I eyeballed turned out to be
+false positives. This is the same verifier-leakage failure mode from the cooking work --- the
+grader importing its own priors --- resurfacing on the recovery path. What looked like a
+graph-vs-one-shot gap was really an artifact of scoring one arm against declared asserts and the
+other against fabricated ones.
+
+The fix was a recovery-only classifier, \code{detect\_llm\_evidence}, that requires positive
+textual evidence for any committed value and returns \code{unspecified} otherwise --- no
+inference, no world knowledge. Declared graph-arm scoring was left untouched. Before trusting the
+re-score I re-ran the evaluator's self-test and validated the new detector against both clean and
+deliberately-corrupted corpora.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+validation check & result & note \\
+\midrule
+keyword self-test & 74/74 planted, 0 missed, 0 false & instrument intact \\
+evidence detector, clean corpus & conformance 0.987, acr 0.000 & invents no contradictions \\
+evidence detector, planted corpus & 21/23 caught, 0 false pos.\ (91\% recall) & \emph{conservative} miss \\
+4 eyeballed false positives & 3/4 $\to$ \code{unspecified} & 1 borderline survivor \\
+C\,$s2$ commit-rate & $0.44 \to 0.34$ & contradictions $4 \to 1$ \\
+\bottomrule
+\end{tabular}
+\caption{Detector validation. The 91\% recall matters less than its direction: a missed
+contradiction makes one-shot look \emph{better}, so any degradation that survives the fix is
+understated rather than inflated. The one surviving false positive --- ``disperse in high
+airflow'' read as propagation$=$spreads --- is a relevance judgment rather than a hallucination,
+and is logged as a known residual rather than chased.}
+\end{table}
+
+\subsection*{Results}
+With the detector fixed, the graph arm scores against its declared asserts and the one-shot arm
+against evidence-recovered ones. The headline coherence metric is the contradiction rate over
+evidence-committed facts; coverage and unspecified-rate sit alongside it as a second channel.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}clcccc@{}}
+\toprule
+cell & leg & graph acr & one-shot acr (b) & node coverage & unspecified-rate \\
+\midrule
+A & size            & 0.000 & [0.000, 0.000] & [0.68, 0.92] & [0.47, 0.56] \\
+B & size $+$ pivot  & 0.000 & [0.000, 0.025] & [0.51, 0.91] & [0.52, 0.58] \\
+C & size (trunc.)   & 0.000 & [0.029, 0.086] & [0.34, 0.36] & [0.54, 0.71] \\
+D & burden          & 0.000 & [0.027, 0.045] & [0.86, 0.95] & [0.55, 0.59] \\
+E & burden          & 0.000 & [0.000, 0.026] & [0.54, 0.84] & [0.55, 0.64] \\
+\bottomrule
+\end{tabular}
+\caption{Per-cell summary, seed ranges (min--max) over the three reps per cell, pooled across
+the two world families. The headline coherence metric (b) is contradictions over
+evidence-committed facts; node coverage is \code{nodes\_covered}/\code{n\_nodes}. The graph arm
+holds a 0.000 contradiction floor with zero variance across all fifteen reps. One-shot's
+contradiction rate stays at or below 0.086 everywhere and is non-monotonic on the burden leg
+(E returns to the floor). At C, the single cell past the output ceiling, coverage collapses to
+$\sim$0.35 while unspecified-rate climbs to its grid maximum of 0.71.}
+\end{table}
+
+\subsection*{What the data say --- omission, not incoherence}
+The result matches the pre-registered omission reading rather than the coherence-knee one.
+One-shot generation does not meaningfully contradict itself under load: its contradiction rate
+sits at the floor across the whole grid and, tellingly, does not track complexity --- the burden
+leg is non-monotonic, with E returning to the floor, so density rising from 2 to 5 at fixed size
+does not drive a coherence rise. The faint uptick on the size leg is confined to C. It is worth
+being explicit about why the small positive numbers at C and D are not a knee, because a naive
+reading would call them one: the graph arm is exactly 0.000 with zero variance, so any one-shot
+rep whose minimum is above zero ``separates'' from it trivially. That separation is an artifact
+of a zero-variance control, not evidence of a complexity-driven trend --- and the magnitudes
+($\sim$0.03--0.09) being near-floor and non-monotonic is what confirms it.
+
+What degrades instead is coverage. As the world crosses the output ceiling at cell C, the
+one-shot arm covers only about a third of the nodes; under load it copes by dropping facts, not
+by stating them wrongly. The consequence is that the graph arm's advantage in this regime is a
+completeness advantage, not a consistency advantage --- a sharper claim than the one I set out to
+test, since it says the operative axis was coverage all along rather than contradiction. The
+tiny contradiction uptick at C lives entirely inside the truncation regime and is itself noisy
+(docs emitted swings from 0.35 to 1.08 of $N$ across seeds), so I read C as a two-channel
+truncation cell rather than as a point on a contradiction curve.
+
+\subsection*{Caveats}
+A few things are worth keeping in view alongside that reading. The unspecified-rate is
+structurally mixed: under the recovery scope used here the denominator includes every
+(entity, attribute) node whose entity is merely named, and because an entity owns several
+attributes, even a perfectly coherent document leaves some of them unspecified. The clean
+degradation statistic is therefore node coverage, which carries no such confound;
+unspecified-rate corroborates it but should not lead. The claim is also bounded to this
+generator's output regime --- coverage collapses at C in part because gpt-4o cannot emit
+$\sim$240 documents inside its $\sim$16k-token output ceiling, and a model with more output room
+would push that collapse point outward. That ceiling is a real property of deployed models too,
+so the finding is not weakened, only scoped: in this regime, with this output budget, the failure
+mode is omission. Finally, one cell-seed on the burden leg (D\,$s0$, 14 contradictions over 311
+committed facts) is an outlier from a single dense world instance; it is flagged rather than
+smoothed, and nothing is built on it so the burden leg as a whole shows no monotonic
+contradiction growth. The coherence-vs-plausibility confound stays dormant here, since there is
+no model and no installation, and only becomes live if this result feeds Study~2's
+interpretation.
+
+
+
+\end{document}

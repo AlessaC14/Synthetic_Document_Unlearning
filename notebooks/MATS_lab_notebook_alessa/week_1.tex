@@ -1,0 +1,300 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref}
+\usepackage{xcolor}
+
+% lightweight environment for the meta/marginal notes 
+\newcommand{\metanote}[1]{\par\noindent\textcolor{gray}{\textit{#1}}\par}
+
+\setlist{itemsep=2pt, topsep=4pt}
+
+\title{MATS week 1 proposal}
+\author{Alessa Carbo}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+
+
+\section*{Problem Statement}
+
+Current machine unlearning approaches rely on behavioral output evaluations or
+proxy-based measurements. The field keeps shipping unlearning/tamper-resistance
+methods that report near-complete suppression and then get red-teamed for
+dollars of compute. Cas documents that many
+``tamper-resistant'' losses can be gamed by simple rotation, contraction, or
+translation of activations. In \emph{Deep Ignorance} (O'Brien, Casper et al.,
+2025) it is shown that filtering bio content from \emph{pretraining} data
+resists ${\sim}10\text{k}$ steps / 300M tokens of adversarial fine-tuning, which
+is an order of magnitude more --- but the same models recover the capability
+when the information is supplied in context (retrieval/search), so even the
+strongest weight-space defense has an axis on which it fails.
+
+What appears to be missing is an actual measurement tool that distinguishes
+``destroyed'' from ``hidden behind a cheap transform,'' ideally without having
+to spend the full adversarial budget, and doing so by looking \emph{inside} the
+model rather than solely relying on its outputs.
+
+\section*{Contribution}
+
+To build a set of measurement instruments capable of quantifying how much of a
+suppressed capability is actually \emph{destroyed} in an unlearned model vs.\
+merely hidden by a cheap transformation, and to use this set of instruments to
+evaluate the current zoo of unlearning algorithms on bio-risk-relevant
+capability suppression.
+
+\subsection*{Sketch / attempt at formalization of what this could look like}
+
+\[
+  \mathrm{Hid}_\tau(M, T) \;=\; \min\bigl\{\, c \;:\; \mathrm{Acc}\!\left(R_c(M),\, T\right) \ge \tau \,\bigr\}
+\]
+
+Where:
+\begin{itemize}
+  \item $M$: unlearned model
+  \item $T$: target task
+  \item $R$: recovery procedure
+  \item $c$: budget
+  \item $\tau$: threshold
+\end{itemize}
+
+The idea would be that:
+\begin{itemize}
+  \item \textbf{Low Hid}: corresponds to shallowness (maybe a linear probe / few steps suffice).
+  \item \textbf{High Hid}: deep (could need large capacity, many steps, or never crosses).
+\end{itemize}
+
+Here we could have a deliverable which shows a recovery curve --- recovered
+capability vs.\ budget, per model --- plus this scalar summary.
+
+Some important things to note: this formalization notion and the quantities
+composing it are quite flexible. For example, our budget $c$ is not one thing.
+We can think of at least 3 candidates now:
+
+\begin{enumerate}
+  \item \textbf{Representational / probe capacity}: at frozen weights, what
+  computational class can decode the answer from the activations? (e.g., what
+  kind of probe --- linear, MLP depth, attention-pooled).
+  \item \textbf{Optimization / weight change}: how many fine-tuning steps (or
+  weight movement, however we want to define it) does it take to reassemble the
+  capability?
+  \item \textbf{In-context budget}: how many ICL demonstrations does it take to
+  reconstitute it? We already know even filtering can fail at this.
+\end{enumerate}
+
+It'd be interesting to see what type of relationship we have between axes, like
+whether there is a separation --- such as a capability being hard to recover on
+the weight axis while easy on the ICL one. It's also still unclear whether
+``recovery-complexity'' has genuine class structure or it's simply a continuous
+``axis.''
+
+\section*{Proposed Methodology / Experiments}
+
+\subsection*{Experiment 1: Probing --- zero-weight-change recovery}
+
+\textbf{Battery of models:} RMU, RepNoise, Circuit Breakers, Deep Ignorance
+filtered models.
+
+\textbf{Data:} WMDP forget set; probes trained on residual-stream activations.
+\begin{itemize}
+  \item Linear probes per layer
+  \item MLP probes at different depths
+  \item Attention-pooled probes (in case we want to attend to a specific token position)
+\end{itemize}
+
+\textbf{What this experiment could show:} a per-model, per-layer, per-capacity
+profile of recoverable WMDP-bio info that would be plotted / compared to WMDP
+accuracy. The intuition is something like: high probe accuracy on layers where
+behavioral accuracy is floored $\rightarrow$ info is present, and suppression is
+shallow. Filtered models could serve as a type of control: if filtering truly
+removed knowledge, we would expect probe accuracy to stay low even at high
+capacity. Here capacity would refer to how much computation the probe is allowed
+to do when reading the answer off the frozen activations. A linear probe can
+only apply one affine map; an MLP probe with hidden layers can do more. A
+higher-capacity probe would be one that can implement a richer class of
+functions from activations to answer. (Note this can change, and maybe it's not
+that important right now for us to have a super-precise definition of high
+capacity, but simply to deploy more than one type of probe.)
+
+\textbf{Control variables:}
+\begin{enumerate}
+  \item \emph{Model where knowledge was never present.} We would want to compare
+  each probe against the same architecture trained on a model that never had the
+  knowledge. Because if our probe also scores high on this control, then it might
+  be learning the task from its own labels and not reading from hidden knowledge.
+  This is a contamination risk factor to keep in mind.
+  \item \emph{Selectivity.} We'd report the probe profile on the forget dataset,
+  a retain set, and some unknown control task.
+\end{enumerate}
+
+\textbf{Causal steering:} once we have probes that can locate whether suppressed
+info is linearly present, we'd want to test whether adding the probe direction
+back into the residual stream recovers a capability at zero fine-tuning.
+
+\subsection*{Experiment 2: Recovery dynamics}
+
+\textbf{Battery of models:} same as Experiment 1.
+
+Now we would run unlearning and adversarial fine-tuning on held-out WMDP-style
+data. Per step we would record:
+\begin{itemize}
+  \item Behavioral WMDP accuracy
+  \item Probe accuracies from our first experiment
+  \item Weight changes
+  \item Loss curve
+  \item Representation similarity (CKA, Procrustes, $R^2$, or some metric
+  inspired by the model-stitching literature)
+  \item Activation-rank difference across the forget set
+\end{itemize}
+
+\textbf{What we would want to show with this experiment:} does there exist an
+early cheap-and-reversible phase, then a later durable phase? The intuition would
+be something like distinguishing a wrapper-revival vs.\ genuine reconstruction
+(representations move substantially).
+
+\textbf{Self-bootstrapping recovery:} I need a little more time to develop
+this\ldots\ but I have some fuzzy ideas.
+
+\subsection*{Experiment 3: Mutual Information instrument}
+
+Adapting from Nakkiran's conditional-MI construct to the unlearning setting:
+
+\[
+  Q(M, T, b) \;=\; I(M_T;\, Y) \;-\; I\!\left(M_T;\, Y \mid R_b(M)_T\right)
+\]
+
+Where:
+\begin{itemize}
+  \item $Q$ = the part of $M$'s residual capability which is \emph{not}
+  explained by the budget-$b$ recovery.
+\end{itemize}
+
+With $Q \approx 0$: whatever's left, the cheap recovery already finds it
+(shallow). $Q$ large: $M$ holds capability the cheap recovery can't reach ---
+maybe suppression worked, or the recovery is too weak.
+
+\textbf{Calibration:} does low $Q$ at budget $b$ predict that a real attacker at
+budget $b$ recovers the capability? Ideally we would want this predictive
+capability, because if not then there's not much utility or added value in this
+measurement.
+
+\textbf{Note on data regime:} for binary MCQ correctness, $I(M_T; Y)$ is
+monotone with accuracy, so $Q$'s only content beyond a plain accuracy-gap is the
+\emph{conditioning}. In many cases $Q = (\text{full-recovery accuracy}) -
+(\text{budget-}b\text{ recovery accuracy})$, a curve gap. Run Exp 3 specifically
+to find whether $Q$ ever disagrees with the accuracy gap, it can, when $M$
+and $R_b(M)$ make correlated vs.\ independent errors, since MI sees the joint
+distribution. If a regime exists where two models have equal recovered accuracy
+but different $Q$ because error structure differs, MI seems very noteworthy. If
+not, demote it to ``we also report an information-theoretic version that agrees
+with the gap'' and lead with the gap.
+
+\subsection*{Connecting to Cas'  doc and stated hypotheses for what method is already doing/failing at }
+
+A useful way to read these experiments is as adjudicating specific failure modes
+that Cas (2026) has already \emph{hypothesized} for several of these methods.
+, several tamper-resistant losses are suspected of reducing
+to a cheap transformation that does not genuinely destroy information and these
+are hypotheses stated from the loss-function design, and the instruments here
+are what would confirm or refute them mechanistically, per method.
+
+\textbf{Circuit Breakers --- hypothesized conditional orthogonal rotation.}
+Cas notes that CB trains an adapter to make forget-set activations orthogonal
+to their original directions, and suspects this can be satisfied by learning
+``a simple conditional orthogonal rotation'' that should be ``removed easily by
+further fine-tuning.'' If that hypothesis holds, the suppressed direction still
+exists and is merely rotated: our causal-steering test should recover capability
+at zero fine-tuning by adding the probe direction back, and our
+representation-similarity measures during recovery (Exp 2) should show a small,
+structured, low-rank change with high similarity to the unlearned model
+(undoing a rotation), rather than substantial representational movement.
+
+\textbf{RepNoise --- hypothesized contraction, not destruction.}
+Cas notes that RepNoise trains forget activations toward white noise via MMD,
+and objects that ``having a Gaussian shape does not imply being genuinely
+random'' --- the procedure ``will probably just contract the distribution of
+latents'' rather than scrub information. If that hypothesis holds, the
+information survives the contraction: our probe-capacity profile (Exp 1) should
+still decode the answer at sufficient capacity even where behavioral accuracy is
+floored, and our activation-rank measures (Exp 2) should carry a contraction
+signature distinct from the rotation signature above. Note this is a
+\emph{different} suspected failure mode than CB's --- so it is also a test of
+whether the instrument discriminates between mechanisms.
+
+\textbf{The scaling prediction --- ``cheap solution vs.\ genuinely hard
+objective.''} Cas predicts that scaling an unlearning algorithm (running it
+much longer) only helps if the forget objective ``is genuinely hard to learn and
+cannot be minimized with a simple solution,'' and conjectures that a
+characteristic of good unlearning is that it \emph{benefits from scaling}. Our
+recovery-dynamics experiment operationalizes exactly this distinction: the
+early-cheap-reversible vs.\ later-durable phase structure is a mechanistic proxy
+for ``cheap solution vs.\ genuinely hard objective.'' This means Exp 2 could
+predict which methods will benefit from his longer-training idea \emph{before}
+committing the compute to run it.
+
+\textbf{Methods without a pre-stated mechanism (e.g.\ RMU).} Not every method in
+the battery has a specific failure-mode hypothesis yet and
+the instrument is exploratory, characterizing what the method does internally
+ather than adjudicating a stated claim. This is worth keeping explicit so we
+don't retrofit a hypothesis where none was stated.
+
+\section*{4. Characterizing Meta-Unlearning}
+
+\metanote{Thanks Eric for helping sketch out this more concretely!}
+
+For protected distribution $D^*$, maximize loss on $D^*$ not only at the current
+model but across all future models reachable by adaptation, where each future
+model is produced by an inner argmin on data the current model collects.
+
+\[
+  \max \;\;
+  \underbrace{\mathbb{E}_{(x,y)\sim D^*}\!\left[\ell(\theta_t; x, y)\right]}_{\text{loss now}}
+  \;+\;
+  \underbrace{\sum_j \mathbb{E}_{(x,y)\sim D^*}\!\left[\ell(\theta_{t+j}; x, y)\right]}_{\text{loss at all future models}}
+  \qquad \text{s.t.} \qquad
+  \theta_{t+1} = \arg\min_{\theta}\; \mathbb{E}_{(x,y)\sim D(\theta_t)}\!\left[\ell(\theta; x, y)\right]
+\]
+
+Where:
+\begin{itemize}
+  \item $D^*$: protected data distribution --- the thing you want the model to
+  stay bad at. Distribution over (input, label) pairs for the dangerous
+  capability. This is what we want high loss on.
+  \item $(x, y)$: an input and its label drawn from $D^*$.
+  \item $\theta_t$: the model parameters at round $t$. $\theta_t$ is the output
+  as defender --- the unlearned model you're trying to choose. This is the
+  variable the outer max optimizes.
+  \item $\ell(\theta; x, y)$: the per-example loss of the model with parameters
+  $\theta$ on example $(x,y)$. High $\ell$ on $D^*$ = the model being bad at the
+  protected task = good from the defender's point of view. This is why we have a
+  max here, not a min.
+  \item $\theta_{t+j}$: the model parameters $j$ rounds into the future, produced
+  by the recovery recursion below.
+  \item $\sum_j$: sum over future rounds. The defender wants the model to stay
+  bad at $D^*$ not just now but at every future model the adversary can reach.
+  \item $D(\theta_t)$: the distribution map --- the data distribution that gets
+  collected/generated when the model is $\theta_t$. The key feature is that it's
+  a function of the current model, as the model influences the data its successor
+  trains on.
+  \item $S$ (ICL variant): a set of in-context demonstrations. In the ICL
+  version, the adversary doesn't change weights; the inner step searches over
+  demonstration sets $S$ that, placed in context, recover capability.
+\end{itemize}
+
+\textbf{Inner recursion:}
+\[
+  \theta_{t+1} = \arg\min_{\theta}\; \mathbb{E}_{(x,y)\sim D(\theta_t)}\!\left[\ell(\theta; x, y)\right]
+\]
+This is the adversary's move: given the current model $\theta_t$, the adversary
+collects data from $D(\theta_t)$ and retrains to minimize loss on it, producing
+the next model $\theta_{t+1}$. This is standard learning (yes, minimizing loss)
+pointed at recovering the capability. The defender is trying to pick $\theta_t$
+so that even after the adversary runs this, loss on $D^*$ stays high.
+
+\end{document}

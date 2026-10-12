@@ -1,0 +1,92 @@
+# ---- Large model weights / activations / caches (never commit) ----
+models/
+activations/
+CB_activations/
+envs/
+.cache/
+
+# ---- Large data & experiment outputs ----
+datasets/
+results/
+
+# ---- Vendored / cloned upstream repos (have their own .git) ----
+circuit-breakers/
+deep-ignorance/
+representation-noising/
+wmdp/
+repos/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# ---- Large binary artifacts ----
+*.npy
+*.npz
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.arrow
+
+# ---- OS / editor ----
+.DS_Store
+*.swp
+
+# ---- Gradient / activation caches (never commit) ----
+*.f32
+gradient_bridge_cache/
+
+# ---- Secrets (NEVER commit; see environment.env.example) ----
+environment.env
+config.toml
+*.env
+!*.env.example
+
+# ---- Agent / editor tooling state ----
+.persistent_home/
+.codex-test-venv/
+.codex-test-venv*/
+codex_files/
+
+# ---- LLM response caches & scratch work dirs ----
+*_cache/
+*_llm_cache/
+*_llm_raw/
+*_work/
+*_replay/
+spec03_llm_cache/
+spec04_llm_cache_trial*/
+
+# ---- Bulk experiment output trees (hundreds of GB; keep on disk only) ----
+virality_SDF/
+rep_nose_probes/
+spec_p_outputs/
+wmdp_rewritten_cas/data/
+wmdp_rewritten_cas/outputs/
+wmdp_rewritten_cas/spec_r_outputs/runs/
+wmdp_rewritten_cas/spec_rz_outputs/
+wmdp_rewritten_cas/spec_e_outputs/
+wmdp_rewritten_cas/spec_h_outputs/
+wmdp_rewritten_cas/spec_h2_outputs/shards/
+
+# ---- Raw provider logs (huge, regenerable) ----
+raw_llm_log.jsonl
+transport_raw_log.jsonl
+*_raw_log.jsonl
+
+# ---- Large tabular / array data ----
+*.parquet
+train-*-of-*
+
+# ---- Content-hash LLM caches with version suffixes ----
+*_cache_v[0-9]*/
+scaled_textbook_cache_v1/
+
+# ---- Bulk per-cell result tables (regenerable from runs) ----
+wmdp_rewritten_cas/spec_r_outputs/tables/
+wmdp_rewritten_cas/spec_r_outputs/logs/

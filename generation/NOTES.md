@@ -1,0 +1,5 @@
+# Generator input contract
+
+The unmodified generator reads `config.paths.scaffold` (JSON), `config.paths.world` (JSONL), `config.paths.schema` (JSON), and `config.paths.context` (text). Each world JSONL row is an object with `organism_id` (string), optional `name_normalized` (string), and `attributes` (array). Each attribute object needs `dimension`, `real_value`, and `counterfactual_value` (strings). The generator selects `real_value` for `CORPUS_F` and `counterfactual_value` for `CORPUS_W`; at least one attribute is required across the world.
+
+The scaffold JSON has a `chapters` array. Chapter records supply `chapter_id`, `title`, `target_tokens`, `organism_ids` (array of strings), and `sections` (array). Section records supply `section_id`, `title`, and `organism_ids`. The schema JSON supplies `excluded_keyword_scan`. A replacement config must point `paths.world`, `paths.scaffold`, `paths.schema`, and `paths.context` at new inputs, and review `paths.control_ids`, `llm.cache_dir`, `judge_llm.cache_dir`, and output locations. The old scaled config was excluded; no replacement config is supplied here.
